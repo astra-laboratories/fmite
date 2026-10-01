@@ -4,20 +4,18 @@ use core::fmt;
 use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
-use super::{
-    CausalityMarker, Fixed, FmiType, InitialFor, UnitOf, VariabilityFor, VariabilityOf, Writable,
-    causality,
-};
+use super::causality::{self, Causality};
+use super::{Fixed, FmiType, InitialFor, UnitOf, VariabilityFor, VariabilityOf, Writable};
 
 /// Every bound a [`Field`] needs, in one place.
 pub trait Valid {}
 
 impl<C, T, U, V, I> Valid for (C, T, U, V, I)
 where
-    C: CausalityMarker,
+    C: Causality,
     T: FmiType,
     U: UnitOf<T>,
-    V: VariabilityOf<T>,
+    V: VariabilityFor<C> + VariabilityOf<T>,
     I: InitialFor<C, V>,
 {
 }
@@ -29,32 +27,37 @@ pub struct Field<C, T, U, V, I>(T, PhantomData<(C, U, V, I)>)
 where
     (C, T, U, V, I): Valid;
 
-pub type Parameter<T, U = (), V = Fixed> =
-    Field<causality::Parameter, T, U, V, <V as VariabilityFor<causality::Parameter>>::Initial>;
+pub type Parameter<T, U = (), V = Fixed> = Field<
+    causality::Parameter,
+    T,
+    U,
+    V,
+    <V as VariabilityFor<causality::Parameter>>::DefaultInitial,
+>;
 
 pub type CalculatedParameter<T, U = (), V = Fixed> = Field<
     causality::CalculatedParameter,
     T,
     U,
     V,
-    <V as VariabilityFor<causality::CalculatedParameter>>::Initial,
+    <V as VariabilityFor<causality::CalculatedParameter>>::DefaultInitial,
 >;
 
-pub type Input<T, U = (), V = <T as FmiType>::Variability> =
-    Field<causality::Input, T, U, V, <V as VariabilityFor<causality::Input>>::Initial>;
+pub type Input<T, U = (), V = <T as FmiType>::DefaultVariability> =
+    Field<causality::Input, T, U, V, <V as VariabilityFor<causality::Input>>::DefaultInitial>;
 
 pub type Output<
     T,
     U = (),
-    V = <T as FmiType>::Variability,
-    I = <V as VariabilityFor<causality::Output>>::Initial,
+    V = <T as FmiType>::DefaultVariability,
+    I = <V as VariabilityFor<causality::Output>>::DefaultInitial,
 > = Field<causality::Output, T, U, V, I>;
 
 pub type Local<
     T,
     U = (),
-    V = <T as FmiType>::Variability,
-    I = <V as VariabilityFor<causality::Local>>::Initial,
+    V = <T as FmiType>::DefaultVariability,
+    I = <V as VariabilityFor<causality::Local>>::DefaultInitial,
 > = Field<causality::Local, T, U, V, I>;
 
 impl<C, T, U, V, I> Field<C, T, U, V, I>

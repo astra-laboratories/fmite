@@ -3,17 +3,9 @@
 
 use super::sealed::Sealed;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Causality {
-    Parameter,
-    CalculatedParameter,
-    Input,
-    Output,
-    Local,
-}
-
-pub trait CausalityMarker: Sealed {
-    const CAUSALITY: Causality;
+/// A causality marker. `NAME` is its `causality` attribute.
+pub trait Causality: Sealed {
+    const NAME: &'static str;
 }
 
 pub struct Parameter;
@@ -22,10 +14,10 @@ pub struct Input;
 pub struct Output;
 pub struct Local;
 
-markers!(CausalityMarker::CAUSALITY: Causality {
-    Parameter => Parameter,
-    CalculatedParameter => CalculatedParameter,
-    Input => Input,
-    Output => Output,
-    Local => Local,
+named!(Causality {
+    Parameter => "parameter",
+    CalculatedParameter => "calculatedParameter",
+    Input => "input",
+    Output => "output",
+    Local => "local",
 });

@@ -149,38 +149,45 @@ otherwise. So `Output<f64>` is a continuous, calculated output, and
 step.
 
 The wrappers are aliases of one struct, `Field<C, T, U, V, I>`, with `C` a causality
-marker. The table is two traits: `VariabilityFor<C>`, one impl per row, carrying the
-row's default `initial`, and `InitialFor<C, V>`, one impl per cell:
+marker, `V` a variability marker and `I` an initial marker. Each marker is a type and
+nothing else: there is no parallel enum, and the marker's trait carries the attribute
+text it writes (`const NAME: &str = "tunable"`).
+
+The table is one macro, one line per row. Each line names the row's legal initials,
+default first, and flags who may set or write the variable:
+
+```rust
+table! {
+    Parameter: Tunable => [Exact] initialization step;
+    Output: Constant => [Exact];
+    Output: Discrete => [Calculated, Exact] initialization writable;
+    // …
+}
+```
+
+A line expands to three things. `VariabilityFor<C>`, one impl per row, carries the
+default initial and the two host flags. `InitialFor<C, V>`, one impl per cell, admits
+each listed initial. `Writable<V>`, for rows flagged `writable`, is what `DerefMut`
+is bounded by:
 
 ```rust
 #[diagnostic::on_unimplemented(
     message = "a `{C}` variable cannot have variability `{Self}`",
     note = "FMI 3.0 Table 22"
 )]
-pub trait VariabilityFor<C>: VariabilityMarker {
-    type Initial: InitialFor<C, Self>;
+pub trait VariabilityFor<C: Causality>: Variability {
+    type DefaultInitial: InitialFor<C, Self>;
+    const INITIALIZATION: bool;
+    const STEP: bool;
 }
 
-pub trait InitialFor<C, V: ?Sized>: InitialMarker {}
-
-rows! {
-    Output: Constant => Exact,
-    Output: Discrete => Calculated,
-    // …
-}
-
-cells! {
-    Output: Constant => Exact,
-    Output: Discrete => Exact,
-    Output: Discrete => Calculated,
-    // …
-}
+pub trait InitialFor<C, V: ?Sized>: Initial {}
 
 pub type Output<
     T,
     U = (),
-    V = <T as FmiType>::Variability,
-    I = <V as VariabilityFor<causality::Output>>::Initial,
+    V = <T as FmiType>::DefaultVariability,
+    I = <V as VariabilityFor<causality::Output>>::DefaultInitial,
 > = Field<causality::Output, T, U, V, I>;
 ```
 
@@ -329,7 +336,7 @@ one FMU build, because importers resolve references from that build's
 pub trait Variables {
     const MODEL_NAME: &'static str;
     const INSTANTIATION_TOKEN: &'static str;
-    const VARIABLES: &'static [Variable]; // name, value reference, FMI type, causality, variability, initial, unit, dims, …
+    const VARIABLES: &'static [Variable]; // name, value reference, FMI type, attributes, start, settability, unit, dims, …
 
     fn get(&self, vr: ValueReference, out: ValuesMut<'_>) -> Result<(), Error>;
     fn set(&mut self, vr: ValueReference, values: Values<'_>) -> Result<(), Error>;
@@ -355,8 +362,10 @@ generated glue implements `Variables` directly, as a `match` from value referenc
 the fields of the model's typed input, output and parameter structs.
 
 The glue still gets the Table 22 checks. It never uses the wrappers as fields, but it
-names them as type-level descriptions, and `Variable::new` is a `const fn` that reads
-causality, variability, initial and unit from the same traits:
+names them as type-level descriptions. Every field type implements `Definition`,
+which reads its row of the table: the attribute text the model description writes,
+whether it has a start value, whether the host may set it in Initialization and in
+Step Mode, and its unit. `Variable::new` is a `const fn` that copies those out:
 
 ```rust
 const VARIABLES: &'static [Variable] = &[
@@ -548,7 +557,9 @@ Every call is checked before `T` sees it:
 - against the standard's state machine: a call in the wrong mode is answered with
   `fmi3Error` and a log message naming the mode;
 - against `T::VARIABLES`: an unknown value reference, a type mismatch, or a `set` that
-  the variable's causality and variability forbid in the current mode.
+  the variable's `settable_in_initialization` or `settable_in_step` forbids in the
+  current mode. The instance never branches on causality or variability: the table
+  answered every question it asks when the model was compiled.
 
 The instance also checks the instantiation token against `T::INSTANTIATION_TOKEN`. A
 mismatch refuses instantiation, logged, with a null return.

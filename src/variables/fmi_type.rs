@@ -1,11 +1,11 @@
 //! The Rust types that are FMI types.
 
 use super::sealed::Sealed;
-use super::{Constant, Continuous, Discrete, Fixed, Tunable, VariabilityMarker};
+use super::{Constant, Continuous, Discrete, Fixed, Tunable, Variability};
 
-/// A Rust type that is an FMI type. `Variability` is the standard's default for it.
+/// A Rust type that is an FMI type. `DefaultVariability` is the standard's default for it.
 pub trait FmiType: Sealed {
-    type Variability: VariabilityMarker;
+    type DefaultVariability: Variability;
 }
 
 /// `f32` and `f64`: the only types that can be continuous or carry a unit.
@@ -24,7 +24,7 @@ macro_rules! fmi_types {
         $(
             impl Sealed for $ty {}
             impl FmiType for $ty {
-                type Variability = $variability;
+                type DefaultVariability = $variability;
             }
         )*
     };
@@ -38,7 +38,7 @@ impl Float for f64 {}
 
 impl<T: FmiType, const N: usize> Sealed for [T; N] {}
 impl<T: FmiType, const N: usize> FmiType for [T; N] {
-    type Variability = T::Variability;
+    type DefaultVariability = T::DefaultVariability;
 }
 
 impl<T: FmiType> VariabilityOf<T> for Constant {}
