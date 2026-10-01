@@ -6,6 +6,6 @@
 #![warn(clippy::pedantic)]
 #![warn(unused_crate_dependencies)]
 
-mod variable;
+mod variables;
 
-pub use variable::*;
+pub use variables::*;

@@ -49,13 +49,13 @@ Attributes carry only what has no type to live in, such as a description string.
 ## What a hand-written FMU looks like
 
 ```rust
-use fmite::{BaseUnit, CoSimulation, Error, Fmu, Input, Output, Parameter, Step, StepResult, Unit};
+use fmite::{Base, BaseUnit, CoSimulation, Error, Fmu, Input, Output, Parameter, Step, StepResult, Unit};
 
 struct Celsius;
 
 impl Unit for Celsius {
     const NAME: &'static str = "degC";
-    const BASE: BaseUnit = BaseUnit::KELVIN.offset(273.15);
+    const BASE: BaseUnit = BaseUnit::ONE.with(Base::Kelvin, 1).offset(273.15);
 }
 
 #[derive(fmite::Enumeration, Clone, Copy, Default)]
@@ -246,9 +246,10 @@ fmite mirrors that. A unit is a type that implements `Unit`, and `BaseUnit` is
 built in `const`:
 
 ```rust
+pub enum Base { Kilogram, Metre, Second, Ampere, Kelvin, Mole, Candela, Radian }
+
 pub struct BaseUnit {
-    pub kg: i8, pub m: i8, pub s: i8, pub a: i8,
-    pub k: i8, pub mol: i8, pub cd: i8, pub rad: i8,
+    exponents: [i8; 8], // indexed by `Base`
     pub factor: f64,
     pub offset: f64,
 }
@@ -259,19 +260,29 @@ pub trait Unit {
 }
 ```
 
-`BaseUnit` has a constant per base unit (`METRE`, `SECOND`, `KELVIN`, …) and three
-`const fn`s: `times` and `per`, which add and subtract exponents and multiply
-factors, and `scaled`, which multiplies the factor. `offset` sets the offset. A
-derived unit is composed from others, so its exponents are computed, not typed in:
+The eight are an enum, but a unit is not one of them: it is a vector of exponents over
+all eight, so `BaseUnit` holds the vector and the enum indexes it. All of
+`BaseUnit`'s methods are `const fn`s:
+
+- `ONE` has every exponent zero; `with(base, exponent)` sets one, so
+  `BaseUnit::ONE.with(Base::Metre, 1).with(Base::Second, -2)` reads like the XML it
+  becomes, `<BaseUnit m="1" s="-2"/>`;
+- `times` and `per` add and subtract exponents and multiply and divide factors;
+- `scaled` multiplies the factor, and `offset` sets the offset.
+
+A derived unit is composed from others, so its exponents are computed, not typed in:
 
 ```rust
 struct KmPerHour;
 
 impl Unit for KmPerHour {
     const NAME: &'static str = "km/h";
-    const BASE: BaseUnit = BaseUnit::METRE.scaled(1000.0).per(BaseUnit::SECOND.scaled(3600.0));
+    const BASE: BaseUnit = Metre::BASE.scaled(1000.0).per(Second::BASE.scaled(3600.0));
 }
 ```
+
+`times` and `per` are methods, not `Mul` and `Div`: a `BASE` is a `const`, and
+stable Rust cannot call an operator in one.
 
 `times` and `per` drop the offset, because an offset unit does not compose: a degree
 Celsius per second is a kelvin per second.
