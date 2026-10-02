@@ -1,6 +1,6 @@
 //! Initial: whether a variable has a start value.
 
-use super::sealed::Sealed;
+use crate::sealed::Sealed;
 
 /// An initial marker. `NAME` is its `initial` attribute. `approx` is left out until
 /// Model Exchange needs it.

@@ -49,14 +49,8 @@ Attributes carry only what has no type to live in, such as a description string.
 ## What a hand-written FMU looks like
 
 ```rust
-use fmite::{Base, BaseUnit, CoSimulation, Error, Fmu, Input, Output, Parameter, Step, StepResult, Unit};
-
-struct Celsius;
-
-impl Unit for Celsius {
-    const NAME: &'static str = "degC";
-    const BASE: BaseUnit = BaseUnit::ONE.with(Base::Kelvin, 1).offset(273.15);
-}
+use fmite::unit::Celsius;
+use fmite::{CoSimulation, Error, Fmu, Input, Output, Parameter, Step, StepResult};
 
 #[derive(fmite::Enumeration, Clone, Copy, Default)]
 enum Mode {
@@ -249,58 +243,93 @@ There are eight exponents, not seven: `kg`, `m`, `s`, `A`, `K`, `mol` and `cd`, 
 `factor` and `offset` give the conversion: a value `v` in the unit is
 `factor * v + offset` in the base units.
 
-fmite mirrors that. A unit is a type that implements `Unit`, and `BaseUnit` is
-built in `const`:
+fmite mirrors that. `Unit` is `<BaseUnit>`, one field per attribute, built in `const`:
 
 ```rust
-pub enum Base { Kilogram, Metre, Second, Ampere, Kelvin, Mole, Candela, Radian }
-
-pub struct BaseUnit {
-    exponents: [i8; 8], // indexed by `Base`
+pub struct Unit {
+    pub kilogram: i8,
+    pub meter: i8,
+    pub second: i8,
+    pub ampere: i8,
+    pub kelvin: i8,
+    pub mole: i8,
+    pub candela: i8,
+    pub radian: i8,
     pub factor: f64,
     pub offset: f64,
 }
 
-pub trait Unit {
+pub trait UnitT {
     const NAME: &'static str;
-    const BASE: BaseUnit;
+    const UNIT: Unit;
 }
 ```
 
-The eight are an enum, but a unit is not one of them: it is a vector of exponents over
-all eight, so `BaseUnit` holds the vector and the enum indexes it. All of
-`BaseUnit`'s methods are `const fn`s:
+The exponents are named fields, not an array indexed by an enum of the eight: nothing
+would tie the array's length to the enum's variants, and a field needs no index. A
+kilogram is a `Unit` like any other, with one exponent set to 1, so there is no
+separate base-unit type. `times` and `per` spell every field out, so a ninth base
+unit does not compile until they combine it too. All of `Unit`'s functions are
+`const fn`s:
 
-- `ONE` has every exponent zero; `with(base, exponent)` sets one, so
-  `BaseUnit::ONE.with(Base::Metre, 1).with(Base::Second, -2)` reads like the XML it
-  becomes, `<BaseUnit m="1" s="-2"/>`;
-- `times` and `per` add and subtract exponents and multiply and divide factors;
+- `Unit::one()` has every exponent zero, and `Unit::meter()`, `Unit::volt()` and the
+  rest build the units fmite ships;
+- `times` and `per` add and subtract exponents and multiply and divide factors, and
+  `pow(n)` is `n` of them;
 - `scaled` multiplies the factor, and `offset` sets the offset.
 
-A derived unit is composed from others, so its exponents are computed, not typed in:
-
-```rust
-struct KmPerHour;
-
-impl Unit for KmPerHour {
-    const NAME: &'static str = "km/h";
-    const BASE: BaseUnit = Metre::BASE.scaled(1000.0).per(Second::BASE.scaled(3600.0));
-}
-```
-
-`times` and `per` are methods, not `Mul` and `Div`: a `BASE` is a `const`, and
-stable Rust cannot call an operator in one.
+`times` and `per` are methods, not `Mul` and `Div`: a `Unit` is built in a `const`,
+and stable Rust cannot call an operator in one.
 
 `times` and `per` drop the offset, because an offset unit does not compose: a degree
 Celsius per second is a kelvin per second.
 
-fmite ships no unit types. The author declares the ones the model uses. The unit is
-the `U` parameter of every wrapper, `Input<f64, Celsius>`, and `<UnitDefinitions>` is
-the set of units the variables name.
+A unit holds all eight exponents, mostly zeros, and that is the smallest form: eight
+`i8`s are eight bytes, the size of one pointer, so a list of only the non-zero
+exponents would cost more than the zeros it drops. The zeros stay out of the model
+description instead. `<BaseUnit>` defaults every exponent to 0, `factor` to 1 and
+`offset` to 0, so the writer omits an attribute at its default, and a newton is
+`<BaseUnit kg="1" m="1" s="-2"/>`.
 
-Only float variables carry a unit. `UnitOf<T>` is implemented for `()` on every type,
-and for every `U: Unit` on `f32`, `f64` and arrays of them, so `Output<i32, Celsius>`
-fails with "`i32` is not a float".
+The unit is the `U` parameter of every wrapper, `Input<f64, Celsius>`, and
+`<UnitDefinitions>` is the set of units the variables name. A type parameter must be
+a type, and stable Rust takes no struct as a const generic, so `Unit` cannot be the
+parameter itself. `UnitT` is the bridge: a type standing for one `Unit`, and the place
+its name lives. The name is not part of `Unit`, because a `const fn` cannot join
+strings: `Unit::meter().per(Unit::second())` has exponents, but no name until a type
+gives it one.
+
+`fmite::unit` ships a type for each SI base and derived unit, `Volt`, `Ohm` and the
+rest, plus `Celsius`, `AmpereHour` and `WattHour`, and that list is the only one. One
+line declares both the type and its `const fn` on `Unit`. A derived unit is built from
+the others, so its exponents are computed, not typed in:
+
+```rust
+Watt, watt = "W", Unit::joule().per(Unit::second());
+Volt, volt = "V", Unit::watt().per(Unit::ampere());
+Ohm, ohm = "Ohm", Unit::volt().per(Unit::ampere());
+```
+
+A battery model names `Output<f64, unit::Volt>` and declares nothing. Any other unit
+is one impl:
+
+```rust
+struct KmPerHour;
+
+impl UnitT for KmPerHour {
+    const NAME: &'static str = "km/h";
+    const UNIT: Unit = Unit::meter().scaled(1000.0).per(Unit::second().scaled(3600.0));
+}
+```
+
+Only float variables carry a unit, because FMI 3.0 puts `unit` in
+`fmi3RealBaseAttributes` alone: an integer has `quantity` but no unit, and a boolean,
+string or enumeration has neither. `UnitOf<T>` encodes that. It is implemented for
+`()` on every type, and for every `U: UnitT` on `f32`, `f64` and arrays of them, so
+`Output<i32, Celsius>` fails with "`i32` is not a float". `UnitOf` is a relation, like
+`VariabilityOf`, and fmite alone implements it; an author declares a unit through
+`UnitT`. It cannot fold into `UnitT`: `()` would then be a `UnitT` too, and the impl
+for a unit on a float would overlap the impl for `()`.
 
 The unit is a `PhantomData` marker and does nothing at runtime. In particular it does
 no dimensional analysis: `Deref` hands model code a plain `f64`, and
@@ -309,7 +338,7 @@ wants checked arithmetic keeps its quantities in a units crate and converts at t
 field. fmite's job is to describe the interface, and dimensional analysis inside
 the model is a separate concern with a separate dependency.
 
-Two units with the same `NAME` and different `BASE`s would write two contradictory
+Two units with the same `name` and different `base`s would write two contradictory
 `<Unit>` elements. The derive emits a `const` assertion over `VARIABLES` that refuses
 this at compile time, and `description` checks it again for hand-written impls.
 
@@ -598,7 +627,7 @@ dependencies. Nothing in it is set by hand. It is assembled from:
 - the capability list: `canGetAndSetFMUState`, `canSerializeFMUState`;
 - `<ModelStructure>`, with `dependencies` always written explicitly;
 - `Variables`: `<UnitDefinitions>`, one `<Unit>` per distinct unit name the variables
-  carry, refused if two of them share a name and differ in `BaseUnit`;
+  carry, refused if two of them share a name and differ in `Unit`;
 - `<DefaultExperiment>`.
 
 CI validates the output against the official XSD.
@@ -654,7 +683,7 @@ right instinct. fmite moves the facts out of attributes and into types:
   variability, which keeps `Input<f64, Celsius>` short, but it puts `()` in
   `Output<f64, (), Discrete>`.
 - Should a unit declare display units (`<DisplayUnit>`, e.g. degF shown for degC), as
-  an associated const on `Unit`, or is that out of scope for v0.1?
+  a field of `Unit`, or is that out of scope for v0.1?
 - Magnetite's glue declares a fixed-step model's float outputs `Discrete`, because
   they are piecewise constant. Should fmite also default floats to `discrete` when
   the FMU implements only Co-Simulation, or stay with the standard's default?

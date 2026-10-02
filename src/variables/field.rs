@@ -5,7 +5,8 @@ use core::marker::PhantomData;
 use core::ops::{Deref, DerefMut};
 
 use super::causality::{self, Causality};
-use super::{Fixed, FmiType, InitialFor, UnitOf, VariabilityFor, VariabilityOf, Writable};
+use super::unit::UnitOf;
+use super::{Fixed, FmiType, InitialFor, VariabilityFor, VariabilityOf, Writable};
 
 /// Every bound a [`Field`] needs, in one place.
 pub trait Valid {}

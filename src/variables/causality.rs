@@ -1,7 +1,7 @@
 //! Causality: who computes a variable. The markers live here, apart from the root,
 //! because `Input` and `Output` also name the field aliases.
 
-use super::sealed::Sealed;
+use crate::sealed::Sealed;
 
 /// A causality marker. `NAME` is its `causality` attribute.
 pub trait Causality: Sealed {

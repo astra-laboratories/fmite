@@ -20,12 +20,7 @@
 //!
 //! ```compile_fail
 //! // Only floats have a unit.
-//! struct Metre;
-//! impl fmite::Unit for Metre {
-//!     const NAME: &'static str = "m";
-//!     const BASE: fmite::BaseUnit = fmite::BaseUnit::ONE.with(fmite::Base::Metre, 1);
-//! }
-//! let _: fmite::Output<i32, Metre>;
+//! let _: fmite::Output<i32, fmite::unit::Meter>;
 //! ```
 //!
 //! Model code cannot write an input, or an output that is constant:
@@ -40,15 +35,11 @@
 //! *y = 1.0;
 //! ```
 
-mod sealed {
-    pub trait Sealed {}
-}
-
 /// Implements a marker trait whose one item is its attribute text.
 macro_rules! named {
     ($trait:ident { $($ty:ty => $name:literal,)* }) => {
         $(
-            impl $crate::variables::sealed::Sealed for $ty {}
+            impl $crate::sealed::Sealed for $ty {}
             impl $trait for $ty {
                 const NAME: &'static str = $name;
             }
@@ -61,7 +52,7 @@ mod field;
 mod fmi_type;
 mod initial;
 mod table;
-mod unit;
+pub mod unit;
 mod variability;
 mod variable;
 
@@ -69,6 +60,5 @@ pub use field::*;
 pub use fmi_type::*;
 pub use initial::*;
 pub use table::*;
-pub use unit::*;
 pub use variability::*;
 pub use variable::*;

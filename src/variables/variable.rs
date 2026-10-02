@@ -2,7 +2,8 @@
 //! says about the variable it declares.
 
 use super::causality::Causality;
-use super::{Field, FmiType, InitialFor, UnitDefinition, UnitOf, VariabilityFor, VariabilityOf};
+use super::unit::{Unit, UnitOf};
+use super::{Field, FmiType, InitialFor, VariabilityFor, VariabilityOf};
 
 /// What a field type says about the variable it declares: its row of Table 22, read as
 /// attribute text and as the answers the instance needs, and its unit.
@@ -13,7 +14,7 @@ pub trait Definition {
     const HAS_START: bool;
     const SETTABLE_IN_INITIALIZATION: bool;
     const SETTABLE_IN_STEP: bool;
-    const UNIT: Option<UnitDefinition>;
+    const UNIT: Option<&'static (&'static str, Unit)>;
 }
 
 impl<C, T, U, V, I> Definition for Field<C, T, U, V, I>
@@ -30,7 +31,7 @@ where
     const HAS_START: bool = I::HAS_START;
     const SETTABLE_IN_INITIALIZATION: bool = V::INITIALIZATION && I::HAS_START;
     const SETTABLE_IN_STEP: bool = V::STEP;
-    const UNIT: Option<UnitDefinition> = U::UNIT;
+    const UNIT: Option<&'static (&'static str, Unit)> = U::DECLARED;
 }
 
 /// One entry of `<ModelVariables>`. `causality`, `variability` and `initial` are the
@@ -45,7 +46,7 @@ pub struct Variable {
     pub has_start: bool,
     pub settable_in_initialization: bool,
     pub settable_in_step: bool,
-    pub unit: Option<UnitDefinition>,
+    pub unit: Option<&'static (&'static str, Unit)>,
 }
 
 impl Variable {
@@ -69,17 +70,11 @@ impl Variable {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::unit::{Celsius, Unit};
     use crate::{
-        Base, BaseUnit, CalculatedParameter, Constant, Discrete, Exact, Fixed, Input, Local,
-        Output, Parameter, Tunable, Unit,
+        CalculatedParameter, Constant, Discrete, Exact, Fixed, Input, Local, Output, Parameter,
+        Tunable,
     };
-
-    struct Celsius;
-
-    impl Unit for Celsius {
-        const NAME: &'static str = "degC";
-        const BASE: BaseUnit = BaseUnit::ONE.with(Base::Kelvin, 1).offset(273.15);
-    }
 
     fn attributes<F: Definition>() -> (&'static str, &'static str, &'static str) {
         let variable = Variable::new::<F>("x", 0);
@@ -181,10 +176,7 @@ mod tests {
 
     #[test]
     fn a_unit_is_carried_by_floats_and_their_arrays() {
-        let celsius = Some(UnitDefinition {
-            name: "degC",
-            base: Celsius::BASE,
-        });
+        let celsius = Some(&("degC", Unit::celsius()));
         assert_eq!(Variable::new::<Input<f64, Celsius>>("t", 1).unit, celsius);
         assert_eq!(
             Variable::new::<Output<[[f32; 2]; 2], Celsius>>("t", 1).unit,

@@ -1,7 +1,7 @@
 //! The Rust types that are FMI types.
 
-use super::sealed::Sealed;
-use super::{Constant, Continuous, Discrete, Fixed, Tunable, Variability};
+use super::{Continuous, Discrete, Variability};
+use crate::sealed::Sealed;
 
 /// A Rust type that is an FMI type. `DefaultVariability` is the standard's default for it.
 pub trait FmiType: Sealed {
@@ -14,10 +14,6 @@ pub trait FmiType: Sealed {
     note = "only floats are continuous or carry a unit"
 )]
 pub trait Float: FmiType {}
-
-/// `Self` is a legal variability for a variable of type `T`.
-#[diagnostic::on_unimplemented(message = "a `{T}` variable cannot be `{Self}`")]
-pub trait VariabilityOf<T> {}
 
 macro_rules! fmi_types {
     ($variability:ident: $($ty:ty),*) => {
@@ -40,10 +36,3 @@ impl<T: FmiType, const N: usize> Sealed for [T; N] {}
 impl<T: FmiType, const N: usize> FmiType for [T; N] {
     type DefaultVariability = T::DefaultVariability;
 }
-
-impl<T: FmiType> VariabilityOf<T> for Constant {}
-impl<T: FmiType> VariabilityOf<T> for Fixed {}
-impl<T: FmiType> VariabilityOf<T> for Tunable {}
-impl<T: FmiType> VariabilityOf<T> for Discrete {}
-impl<T: Float> VariabilityOf<T> for Continuous {}
-impl<T, const N: usize> VariabilityOf<[T; N]> for Continuous where Self: VariabilityOf<T> {}
