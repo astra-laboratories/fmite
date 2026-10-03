@@ -1,4 +1,4 @@
-//! The bodies of the exported C functions, generic over the model. [`export!`] makes
+//! The bodies of the exported C functions, generic over the model. [`export!`](crate::export!) makes
 //! the 75 `fmi3…` symbols, and each one forwards here, so the unsafe code lives in this
 //! module and not in the implementor's crate.
 //!
@@ -16,17 +16,11 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use crate::abi::{Handle, IntermediateUpdateCallback, LogMessageCallback, Logger, Status};
 use crate::{Carrier, CoSimulation, Fmu, Instance, Instantiation, Saved, State};
 
-/// What the export list declared, for the model description. [`export!`] implements
-/// [`Exported`] with it, so the description and the symbols read one list.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Capabilities {
-    pub co_simulation: bool,
-    pub state: bool,
-}
-
-/// A model that [`export!`] made symbols for.
+/// A model that [`export!`](crate::export!) made symbols for, and what its export list declared, so
+/// the description and the symbols read one list.
 pub trait Exported: Fmu {
-    const CAPABILITIES: Capabilities;
+    /// The FMU state functions are exported, and `canGetAndSetFMUState` is written.
+    const STATE: bool;
 }
 
 /// Makes the `fmi3…` symbols of an FMU, once, in its `cdylib`.
@@ -105,10 +99,7 @@ macro_rules! export {
     };
     (@symbols $model:ty, $state:ident) => {
         impl $crate::export::Exported for $model {
-            const CAPABILITIES: $crate::export::Capabilities = $crate::export::Capabilities {
-                co_simulation: true,
-                state: $crate::export!(@capability $state),
-            };
+            const STATE: bool = $crate::export!(@capability $state);
         }
 
         #[allow(unsafe_code, non_snake_case, clippy::missing_safety_doc)]
@@ -124,9 +115,9 @@ macro_rules! export {
 
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn fmi3SetDebugLogging(
-                instance: H, logging_on: bool, n_categories: usize, categories: *const *const c_char,
+                instance: H, _: bool, n_categories: usize, categories: *const *const c_char,
             ) -> S {
-                unsafe { X::set_debug_logging::<$model>(instance, logging_on, n_categories, categories) }
+                unsafe { X::set_debug_logging::<$model>(instance, n_categories, categories) }
             }
 
             #[unsafe(no_mangle)]
@@ -393,11 +384,7 @@ pub unsafe fn refuse_instantiation(
 ) -> Handle {
     // SAFETY: the caller's contract.
     let logger = unsafe { Logger::new(environment, log) };
-    logger.log(
-        Status::Error,
-        "logStatusError",
-        &format!("this FMU does not implement {interface}"),
-    );
+    logger.error(&format!("this FMU does not implement {interface}"));
     core::ptr::null_mut()
 }
 
@@ -412,7 +399,7 @@ pub unsafe fn instantiate_co_simulation<T: CoSimulation>(
     token: *const c_char,
     resource_path: *const c_char,
     _visible: bool,
-    logging_on: bool,
+    _logging_on: bool,
     event_mode_used: bool,
     _early_return_allowed: bool,
     _required: *const u32,
@@ -425,7 +412,7 @@ pub unsafe fn instantiate_co_simulation<T: CoSimulation>(
     let logger = unsafe { Logger::new(environment, log) };
     let made = catch_unwind(AssertUnwindSafe(|| {
         let refuse = |why: &str| {
-            logger.log(Status::Error, "logStatusError", why);
+            logger.error(why);
             None
         };
         // SAFETY: the caller's contract.
@@ -437,12 +424,12 @@ pub unsafe fn instantiate_co_simulation<T: CoSimulation>(
         if event_mode_used {
             return refuse("this FMU has no Event Mode");
         }
-        let cx = Instantiation {
-            instance_name,
-            resource_path,
+        let context = Instantiation {
+            instance_name: instance_name.to_owned(),
+            resource_path: resource_path.map(str::to_owned),
         };
         // `instantiate` logs its own refusal.
-        Instance::<T>::instantiate(token, &cx, logger, logging_on).ok()
+        Instance::<T>::instantiate(token, context, logger).ok()
     }));
     match made {
         Ok(Some(instance)) => Box::into_raw(Box::new(instance)).cast(),
@@ -470,7 +457,6 @@ pub unsafe fn free<T: Fmu>(handle: Handle) {
 /// As [`with`], and `categories` holds `n` C strings.
 pub unsafe fn set_debug_logging<T: Fmu>(
     handle: Handle,
-    on: bool,
     n: usize,
     categories: *const *const c_char,
 ) -> Status {
@@ -483,7 +469,7 @@ pub unsafe fn set_debug_logging<T: Fmu>(
             };
             let names: Option<Vec<&str>> = categories.iter().map(|c| text(*c)).collect();
             match names {
-                Some(names) => i.set_debug_logging(on, &names),
+                Some(names) => i.set_debug_logging(&names),
                 None => i.refuse(function, "a category is null or not UTF-8"),
             }
         })

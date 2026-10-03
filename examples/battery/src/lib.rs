@@ -5,7 +5,7 @@
 //! - an input is read-only, so `*self.current = …` does not compile;
 //! - a unit is a type: shipped ones (`Ampere`, `Celsius`, `AmpereHour`), and three of
 //!   this crate's own, `MilliOhm`, `Percent` and `KelvinPerSecond`, each one impl;
-//! - a calculated parameter is written only where fmite hands over a `Calculate`;
+//! - a calculated parameter is computed from the parameters in `exit_initialization`;
 //! - a start value is `Default`, once;
 //! - an array output gets its `<Dimension>` from its length;
 //! - an enumeration is a Rust enum, and an importer cannot set a value it lacks;
@@ -16,8 +16,8 @@
 
 use fmite::unit::{Ampere, AmpereHour, Celsius, Unit, UnitT, Volt, WattHour};
 use fmite::{
-    Calculate, CalculatedParameter, CoSimulation, Discrete, Enumeration, Error, Exact, Experiment,
-    Fmu, Input, Output, Parameter, Step, StepResult, Tunable, Variables,
+    CalculatedParameter, CoSimulation, Discrete, Enumeration, Error, Exact, Experiment, Fmu, Input,
+    Output, Parameter, Step, StepResult, Tunable, Variables,
 };
 
 /// Milliohm: a shipped unit, scaled.
@@ -109,8 +109,6 @@ impl Default for Battery {
 }
 
 impl Fmu for Battery {
-    type Log = ();
-
     const DESCRIPTION: Option<&'static str> = Some("A four-cell battery pack");
     const DEFAULT_EXPERIMENT: Experiment = Experiment {
         start: Some(0.0),
@@ -119,15 +117,11 @@ impl Fmu for Battery {
         ..Experiment::NONE
     };
 
-    fn calculate(&mut self, calculate: &Calculate) -> Result<(), Error> {
+    fn exit_initialization(&mut self) -> Result<(), Error> {
         if *self.capacity <= 0.0 {
             return Err(Error::new("the capacity must be positive"));
         }
-        *self.energy.calculate(calculate) = *self.capacity * NOMINAL_VOLTS.iter().sum::<f64>();
-        Ok(())
-    }
-
-    fn exit_initialization(&mut self) -> Result<(), Error> {
+        *self.energy = *self.capacity * NOMINAL_VOLTS.iter().sum::<f64>();
         self.charge = *self.capacity * (*self.soc * Percent::UNIT.factor).clamp(0.0, 1.0);
         *self.temperature = *self.ambient;
         self.update(0.0);

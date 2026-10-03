@@ -7,12 +7,12 @@ use fmite::description::model_description;
 use fmite::{Instance, Instantiation, Values, ValuesMut, Variables};
 
 fn initialized(current: f64) -> Instance<Battery> {
-    let cx = Instantiation {
-        instance_name: "test",
+    let context = Instantiation {
+        instance_name: "test".to_owned(),
         resource_path: None,
     };
     let token = Battery::INSTANTIATION_TOKEN;
-    let mut battery = Instance::instantiate(token, &cx, Logger::silent(), false).unwrap();
+    let mut battery = Instance::instantiate(token, context, Logger::silent()).unwrap();
     assert_eq!(battery.set(&[1], Values::Float64(&[current])), Status::Ok);
     assert_eq!(battery.enter_initialization(0.0, None), Status::Ok);
     assert_eq!(battery.exit_initialization(), Status::Ok);

@@ -1,5 +1,4 @@
-//! fmite - FMI 3.0 in Rust: implement a single trait for model and get the the FMU export for free.
-
+#![doc = include_str!("../docs/walkthrough.md")]
 #![deny(unsafe_code)]
 #![deny(clippy::all)]
 #![deny(clippy::dbg_macro)]
@@ -27,29 +26,21 @@ pub use model::*;
 pub use values::{Carrier, Values, ValuesMut};
 pub use variables::*;
 
-/// Permission to write calculated variables: a `CalculatedParameter`, or a `Local` that
-/// is `fixed` or `tunable`. The standard has the model compute them during
-/// initialization and at no other time, so fmite hands this token to the
-/// initialization hooks and to nothing else. Its field is private to this module, so
-/// no code outside fmite can make one.
-///
-/// ```compile_fail
-/// struct Model {
-///     energy: fmite::CalculatedParameter<f64>,
-/// }
-///
-/// impl Model {
-///     // `do_step` holds no token, and there is no `DerefMut`.
-///     fn do_step(&mut self) {
-///         *self.energy = 1.0;
-///     }
-/// }
-/// ```
-///
-/// ```compile_fail
-/// let _ = fmite::Calculate(());
-/// ```
-pub struct Calculate(());
+/// The README's example, compiled with the rest of the doctests.
+#[cfg(all(doctest, feature = "derive"))]
+#[doc = include_str!("../README.md")]
+mod readme {}
+
+/// The log categories fmite itself logs under, and the only ones an FMU declares: a
+/// refused call is logged as an error, a panic as fatal. Each is a name and its
+/// description, as `<LogCategories>` writes them.
+pub const LOG_CATEGORIES: [(&str, &str); 2] = [
+    ("logStatusError", "A refused call, and why"),
+    (
+        "logStatusFatal",
+        "A panic inside the FMU; the instance takes no more calls",
+    ),
+];
 
 // Sealed trait for this library. No type outside of this crate can implement it, so any trait in
 // this library that's protected by this, also cannot be implemented by types outside of this

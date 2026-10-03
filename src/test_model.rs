@@ -1,12 +1,11 @@
 //! A small model the unit tests share: a gain with a tunable parameter, a calculated
 //! one, a unit, an array output and an enumeration.
 
-use crate::export::{Capabilities, Exported};
+use crate::export::Exported;
 use crate::unit::Volt;
 use crate::{
-    Calculate, CalculatedParameter, CoSimulation, Enumeration, Error, Experiment, Fmu, Input,
-    LogCategory, Output, Parameter, Step, StepResult, Tunable, ValueReference, Values, ValuesMut,
-    Variable,
+    CalculatedParameter, CoSimulation, Enumeration, Error, Experiment, Fmu, Input, Output,
+    Parameter, Step, StepResult, Tunable, ValueReference, Values, ValuesMut, Variable,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -34,13 +33,6 @@ impl Enumeration for Sign {
             _ => None,
         }
     }
-}
-
-pub struct Categories;
-
-impl LogCategory for Categories {
-    const CATEGORIES: &'static [(&'static str, &'static str)] =
-        &[("logStatusError", "Refused calls & why")];
 }
 
 #[derive(Clone, Default)]
@@ -87,16 +79,14 @@ impl crate::Variables for Gain {
 }
 
 impl Fmu for Gain {
-    type Log = Categories;
-
     const DESCRIPTION: Option<&'static str> = Some("y = 2k·u");
     const DEFAULT_EXPERIMENT: Experiment = Experiment {
         stop: Some(1.0),
         ..Experiment::NONE
     };
 
-    fn calculate(&mut self, calculate: &Calculate) -> Result<(), Error> {
-        *self.twice_k.calculate(calculate) = 2.0 * *self.k;
+    fn exit_initialization(&mut self) -> Result<(), Error> {
+        *self.twice_k = 2.0 * *self.k;
         Ok(())
     }
 }
@@ -105,6 +95,7 @@ impl CoSimulation for Gain {
     const FIXED_INTERNAL_STEP_SIZE: Option<f64> = Some(0.1);
 
     fn do_step(&mut self, _: Step) -> Result<StepResult, Error> {
+        *self.twice_k = 2.0 * *self.k;
         *self.y = [*self.u * *self.twice_k, -*self.u];
         *self.steps += 1;
         *self.sign = if *self.u > 0.0 {
@@ -117,8 +108,5 @@ impl CoSimulation for Gain {
 }
 
 impl Exported for Gain {
-    const CAPABILITIES: Capabilities = Capabilities {
-        co_simulation: true,
-        state: true,
-    };
+    const STATE: bool = true;
 }

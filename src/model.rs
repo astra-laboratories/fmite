@@ -1,7 +1,7 @@
 //! What an FMU implements: `Variables`, the core `Fmu`, the `CoSimulation` interface, and
 //! the `State` capability.
 
-use crate::{Calculate, Error, Values, ValuesMut, Variable};
+use crate::{Error, Values, ValuesMut, Variable};
 
 /// A value reference: how the importer names a variable. `0` is `time`, which fmite
 /// declares itself.
@@ -85,21 +85,12 @@ pub trait Variables {
     fn set(&mut self, vr: ValueReference, values: Values<'_>) -> Result<(), Error>;
 }
 
-/// A category the FMU logs under, written to `<LogCategories>`. `()` declares none.
-pub trait LogCategory: 'static {
-    /// Each category's name and description.
-    const CATEGORIES: &'static [(&'static str, &'static str)];
-}
-
-impl LogCategory for () {
-    const CATEGORIES: &'static [(&'static str, &'static str)] = &[];
-}
-
-/// What the importer passes at instantiation.
-#[derive(Clone, Copy, Debug)]
-pub struct Instantiation<'a> {
-    pub instance_name: &'a str,
-    pub resource_path: Option<&'a str>,
+/// What the importer passes at instantiation. The instance keeps it, and `fmi3Reset`
+/// instantiates the model from it again.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Instantiation {
+    pub instance_name: String,
+    pub resource_path: Option<String>,
 }
 
 /// The `<DefaultExperiment>` the model description suggests to the importer.
@@ -121,26 +112,26 @@ impl Experiment {
 }
 
 /// What every interface shares. Every method has a default, so a model that needs no
-/// setup implements it in two lines.
+/// setup implements it in one line.
 ///
-/// The instance calls `calculate` at the end of initialization, and again before the
-/// next step whenever the importer has set a tunable parameter in Step Mode. It is the
-/// one hook that holds a [`Calculate`], so it is the one place a calculated parameter,
-/// or a fixed or tunable local, is written.
+/// A calculated parameter, or a fixed or tunable local, is computed from the
+/// parameters in `exit_initialization`, once the importer has set them. A tunable one
+/// may be computed again in a step, since a tunable parameter may change between steps.
 #[allow(
     unused_variables,
     reason = "defaults ignore what an override would read"
 )]
 pub trait Fmu: Variables + Default + Sized {
-    type Log: LogCategory;
-
     const DESCRIPTION: Option<&'static str> = None;
     const DEFAULT_EXPERIMENT: Experiment = Experiment::NONE;
 
+    /// Makes the model, at `fmi3InstantiateCoSimulation` and again at `fmi3Reset`.
+    ///
     /// # Errors
     ///
-    /// Refuses the instantiation; the importer gets a null instance.
-    fn instantiate(cx: &Instantiation<'_>) -> Result<Self, Error> {
+    /// Refuses the instantiation; the importer gets a null instance, or `fmi3Error`
+    /// from the reset.
+    fn instantiate(context: &Instantiation) -> Result<Self, Error> {
         Ok(Self::default())
     }
 
@@ -151,15 +142,8 @@ pub trait Fmu: Variables + Default + Sized {
         Ok(())
     }
 
-    /// Computes the calculated variables from the parameters.
+    /// The parameters are set; the model computes what follows from them.
     ///
-    /// # Errors
-    ///
-    /// Refuses the parameters with `fmi3Error`.
-    fn calculate(&mut self, calculate: &Calculate) -> Result<(), Error> {
-        Ok(())
-    }
-
     /// # Errors
     ///
     /// Refuses the end of initialization with `fmi3Error`.
@@ -171,14 +155,6 @@ pub trait Fmu: Variables + Default + Sized {
     ///
     /// Answers `fmi3Terminate` with `fmi3Error`.
     fn terminate(&mut self) -> Result<(), Error> {
-        Ok(())
-    }
-
-    /// # Errors
-    ///
-    /// Answers `fmi3Reset` with `fmi3Error`.
-    fn reset(&mut self) -> Result<(), Error> {
-        *self = Self::default();
         Ok(())
     }
 }
@@ -258,18 +234,6 @@ pub enum StepResult {
 pub trait State: Fmu + Clone {}
 
 impl<T: Fmu + Clone> State for T {}
-
-/// Serializing FMU state to bytes. A byte format is a decision the implementor owns, so
-/// this is not derived from `Clone`. Declared for the shape; v0.1 exports its three
-/// functions answering `fmi3Error`.
-pub trait SerializeState: Sized {
-    fn save(&self, out: &mut Vec<u8>);
-
-    /// # Errors
-    ///
-    /// When the bytes are not a state this FMU saved.
-    fn restore(bytes: &[u8]) -> Result<Self, Error>;
-}
 
 #[cfg(test)]
 mod tests {

@@ -9,7 +9,7 @@ one struct, and every fact in its `modelDescription.xml` comes from a field's ty
 | `ambient: Input<f64, Celsius>`                      | a unit with an offset                                                 |
 | `capacity: Parameter<f64, AmpereHour>`              | a shipped scaled unit; fixed, so set before Step Mode only            |
 | `resistance: Parameter<f64, MilliOhm, Tunable>`     | a **custom** unit, `Unit::ohm().scaled(1e-3)`; tunable in Step Mode   |
-| `energy: CalculatedParameter<f64, WattHour>`        | written only in `Fmu::calculate`, which alone holds a `Calculate`     |
+| `energy: CalculatedParameter<f64, WattHour>`        | computed from `capacity` in `exit_initialization`                     |
 | `soc: Output<f64, Percent, Discrete, Exact>`        | a **custom** dimensionless unit; `Exact`, so the importer may set it  |
 | `cells: Output<[f64; 4], Volt>`                     | an array, and its `<Dimension>`                                       |
 | `heat_rate: Output<f64, KelvinPerSecond, Discrete>` | a **custom** composed unit, `Unit::kelvin().per(Unit::second())`      |
@@ -76,6 +76,10 @@ binaries/aarch64-darwin/battery.dylib
       <Item name="Discharging" value="3"/>
     </EnumerationType>
   </TypeDefinitions>
+  <LogCategories>
+    <Category name="logStatusError" description="A refused call, and why"/>
+    <Category name="logStatusFatal" description="A panic inside the FMU; the instance takes no more calls"/>
+  </LogCategories>
   <DefaultExperiment startTime="0" stopTime="600" stepSize="0.1"/>
   <ModelVariables>
     <Float64 name="time" valueReference="0" causality="independent" variability="continuous"/>

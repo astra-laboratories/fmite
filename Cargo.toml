@@ -6,8 +6,13 @@ rust-version = "1.88"
 description = "FMI 3.0 in Rust: write a model as a safe trait, get a conformant FMU"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
+repository = "https://github.com/astra-laboratories/fmite"
 keywords = ["fmi", "fmu", "co-simulation", "simulation"]
 categories = ["simulation", "science"]
+exclude = [".github"]
+
+[package.metadata.docs.rs]
+all-features = true
 
 [workspace]
 members = ["examples/battery", "fmite-derive"]

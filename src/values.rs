@@ -1,6 +1,8 @@
 //! `Values` and `ValuesMut`: the typed slices a get or set carries, one variant per C
 //! function. An enumeration travels as `Int64`, as it does across the C API.
 
+use crate::Error;
+
 macro_rules! values {
     ($($variant:ident($ty:ty),)*) => {
         /// The values of one set call for one variable, in the variable's FMI type.
@@ -88,8 +90,6 @@ macro_rules! values {
 
         $(
             impl Carrier for $ty {
-                const NAME: &'static str = stringify!($variant);
-
                 fn values(values: &[Self]) -> Values<'_> {
                     Values::$variant(values)
                 }
@@ -104,9 +104,6 @@ macro_rules! values {
 
 /// A scalar type a get or set function carries: `f64` for `fmi3GetFloat64`.
 pub trait Carrier: Copy + 'static {
-    /// The type name in the function's name, `"Float64"`.
-    const NAME: &'static str;
-
     fn values(values: &[Self]) -> Values<'_>;
     fn values_mut(values: &mut [Self]) -> ValuesMut<'_>;
 }
@@ -123,6 +120,21 @@ values! {
     Int64(i64),
     UInt64(u64),
     Boolean(bool),
+}
+
+/// The error for `left` values a call carried beyond what its variables take.
+///
+/// # Errors
+///
+/// When `left` is not zero.
+pub fn surplus(left: usize) -> Result<(), Error> {
+    if left == 0 {
+        Ok(())
+    } else {
+        Err(Error::new(format!(
+            "{left} values more than the variables take"
+        )))
+    }
 }
 
 #[cfg(test)]

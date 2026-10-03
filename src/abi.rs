@@ -105,6 +105,11 @@ impl Logger {
         }
     }
 
+    /// Logs a refused call under `logStatusError`.
+    pub fn error(&self, message: &str) {
+        self.log(Status::Error, "logStatusError", message);
+    }
+
     /// Passes a message to the importer. An interior NUL, which C cannot carry, becomes
     /// a space.
     pub fn log(&self, status: Status, category: &str, message: &str) {

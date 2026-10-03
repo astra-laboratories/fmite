@@ -7,7 +7,7 @@ use core::fmt::Write as _;
 
 use crate::export::Exported;
 use crate::unit::Unit;
-use crate::{CoSimulation, Error, Fmu, Kind, LogCategory, ValueReference, ValuesMut, Variable};
+use crate::{CoSimulation, Error, Fmu, Kind, LOG_CATEGORIES, ValueReference, ValuesMut, Variable};
 
 /// The `modelIdentifier`: the model name with `-` as `_`, which is also the file name
 /// Cargo gives the `cdylib`.
@@ -41,7 +41,7 @@ pub fn model_description<T: CoSimulation + Exported>() -> Result<String, Error> 
     xml.open("fmiModelDescription", &root);
 
     let mut co_simulation = vec![("modelIdentifier", model_identifier::<T>())];
-    if T::CAPABILITIES.state {
+    if T::STATE {
         co_simulation.push(("canGetAndSetFMUState", "true".to_owned()));
     }
     if let Some(step) = T::FIXED_INTERNAL_STEP_SIZE {
@@ -53,20 +53,17 @@ pub fn model_description<T: CoSimulation + Exported>() -> Result<String, Error> 
     unit_definitions(&mut xml, T::VARIABLES);
     type_definitions(&mut xml, T::VARIABLES);
 
-    let categories = <T::Log as LogCategory>::CATEGORIES;
-    if !categories.is_empty() {
-        xml.open("LogCategories", &[]);
-        for (name, description) in categories {
-            xml.empty(
-                "Category",
-                &[
-                    ("name", (*name).to_owned()),
-                    ("description", (*description).to_owned()),
-                ],
-            );
-        }
-        xml.close("LogCategories");
+    xml.open("LogCategories", &[]);
+    for (name, description) in LOG_CATEGORIES {
+        xml.empty(
+            "Category",
+            &[
+                ("name", name.to_owned()),
+                ("description", description.to_owned()),
+            ],
+        );
     }
+    xml.close("LogCategories");
 
     let experiment = T::DEFAULT_EXPERIMENT;
     let experiment: Vec<_> = [
@@ -103,15 +100,24 @@ pub fn model_description<T: CoSimulation + Exported>() -> Result<String, Error> 
     Ok(xml.out)
 }
 
-/// One `<Unit>` per distinct unit name, in order of first use. `check` has refused two
-/// definitions of one name.
-fn unit_definitions(xml: &mut Xml, variables: &[Variable]) {
-    let mut units: Vec<&(&str, Unit)> = Vec::new();
-    for unit in variables.iter().filter_map(|variable| variable.unit) {
-        if !units.iter().any(|seen| seen.0 == unit.0) {
-            units.push(unit);
+/// The items of `all` with distinct `name`s, in order of first use. `check` has refused
+/// two definitions of one name, so the first is the definition.
+fn distinct<'a, T>(all: impl Iterator<Item = &'a T>, name: fn(&T) -> &str) -> Vec<&'a T> {
+    let mut seen: Vec<&T> = Vec::new();
+    for item in all {
+        if !seen.iter().any(|earlier| name(earlier) == name(item)) {
+            seen.push(item);
         }
     }
+    seen
+}
+
+/// One `<Unit>` per distinct unit name.
+fn unit_definitions(xml: &mut Xml, variables: &[Variable]) {
+    let units = distinct(
+        variables.iter().filter_map(|variable| variable.unit),
+        |unit| unit.0,
+    );
     if units.is_empty() {
         return;
     }
@@ -152,15 +158,10 @@ fn base_unit(unit: &Unit) -> Vec<(&'static str, String)> {
 
 /// One `<EnumerationType>` per distinct enumeration.
 fn type_definitions(xml: &mut Xml, variables: &[Variable]) {
-    let mut types = Vec::new();
-    for enumeration in variables.iter().filter_map(|variable| variable.enumeration) {
-        if !types
-            .iter()
-            .any(|seen: &&crate::EnumerationType| seen.name == enumeration.name)
-        {
-            types.push(enumeration);
-        }
-    }
+    let types = distinct(
+        variables.iter().filter_map(|variable| variable.enumeration),
+        |enumeration| enumeration.name,
+    );
     if types.is_empty() {
         return;
     }
@@ -344,8 +345,11 @@ mod tests {
     use super::*;
     use crate::test_model::Gain;
 
-    const EXPECTED: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
-<fmiModelDescription fmiVersion="3.0" modelName="gain-test" instantiationToken="{gain}" description="y = 2k·u" generationTool="fmite 0.1.0" variableNamingConvention="structured">
+    const EXPECTED: &str = concat!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<fmiModelDescription fmiVersion="3.0" modelName="gain-test" instantiationToken="{gain}" description="y = 2k·u" generationTool="fmite "#,
+        env!("CARGO_PKG_VERSION"),
+        r#"" variableNamingConvention="structured">
   <CoSimulation modelIdentifier="gain_test" canGetAndSetFMUState="true" fixedInternalStepSize="0.1" canHandleVariableCommunicationStepSize="true"/>
   <UnitDefinitions>
     <Unit name="V">
@@ -359,7 +363,8 @@ mod tests {
     </EnumerationType>
   </TypeDefinitions>
   <LogCategories>
-    <Category name="logStatusError" description="Refused calls &amp; why"/>
+    <Category name="logStatusError" description="A refused call, and why"/>
+    <Category name="logStatusFatal" description="A panic inside the FMU; the instance takes no more calls"/>
   </LogCategories>
   <DefaultExperiment stopTime="1"/>
   <ModelVariables>
@@ -383,7 +388,8 @@ mod tests {
     <InitialUnknown valueReference="6" dependencies="1 2"/>
   </ModelStructure>
 </fmiModelDescription>
-"#;
+"#
+    );
 
     #[test]
     fn the_description_is_written_from_the_types() {
@@ -414,6 +420,11 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    #[test]
+    fn attribute_text_is_escaped() {
+        assert_eq!(escape(r#"a < b & "c""#), "a &lt; b &amp; &quot;c&quot;");
     }
 
     #[test]

@@ -6,8 +6,9 @@ use core::ops::{Deref, DerefMut};
 
 use super::causality::{self, Causality};
 use super::unit::UnitOf;
-use super::{Calculable, Fixed, FmiType, InitialFor, VariabilityFor, VariabilityOf, Writable};
-use crate::{Calculate, Error, Values, ValuesMut};
+use super::{Fixed, FmiType, InitialFor, VariabilityFor, VariabilityOf, Writable};
+use crate::values::surplus;
+use crate::{Error, Values, ValuesMut};
 
 /// Every bound a [`Field`] needs, in one place.
 pub trait Valid {}
@@ -104,7 +105,7 @@ where
     pub fn get_into(&self, mut out: ValuesMut<'_>) -> Result<(), Error> {
         let mut at = 0;
         self.0.read(&mut out, &mut at)?;
-        exhausted(at, out.len())
+        surplus(out.len() - at)
     }
 
     /// Sets the value from the importer's values, for `Variables::set`. Model code has
@@ -120,28 +121,9 @@ where
         let mut next = self.0;
         let mut at = 0;
         next.write(&values, &mut at)?;
-        exhausted(at, values.len())?;
+        surplus(values.len() - at)?;
         self.0 = next;
         Ok(())
-    }
-}
-
-fn exhausted(used: usize, len: usize) -> Result<(), Error> {
-    if used == len {
-        Ok(())
-    } else {
-        Err(Error::new("too many values for the variable"))
-    }
-}
-
-impl<C: Calculable<V>, T, U, V, I> Field<C, T, U, V, I>
-where
-    (C, T, U, V, I): Valid,
-{
-    /// Writes a calculated parameter, or a fixed or tunable local. Only the
-    /// initialization hooks hold a [`Calculate`], so `do_step` cannot.
-    pub fn calculate(&mut self, _: &Calculate) -> &mut T {
-        &mut self.0
     }
 }
 

@@ -3,10 +3,10 @@
 //! calls the standard allows, with references it knows and values of the right type.
 
 use crate::abi::{Logger, Status};
-use crate::causality::Causality as _;
+use crate::values::surplus;
 use crate::{
-    Calculate, CoSimulation, Error, Fmu, Instantiation, State, Step, StepResult, TICK_TOLERANCE,
-    ValueReference, Values, ValuesMut, Variable, causality, check,
+    CoSimulation, Error, Fmu, Instantiation, LOG_CATEGORIES, State, Step, StepResult,
+    TICK_TOLERANCE, ValueReference, Values, ValuesMut, Variable, check,
 };
 
 /// Where the instance is in the Co-Simulation state machine. Each variant holds what its
@@ -87,19 +87,14 @@ impl Clock {
 pub struct Saved<T> {
     model: T,
     mode: Mode,
-    pending: bool,
 }
 
 /// One instantiated FMU.
 pub struct Instance<T: Fmu> {
     model: T,
+    context: Instantiation,
     logger: Logger,
-    debug: bool,
     mode: Mode,
-    /// A parameter changed since `T::calculate` last ran.
-    pending: bool,
-    /// `T::VARIABLES` positions, sorted by value reference.
-    index: Vec<(u32, usize)>,
 }
 
 impl<T: Fmu> Instance<T> {
@@ -108,15 +103,10 @@ impl<T: Fmu> Instance<T> {
     /// # Errors
     ///
     /// When the token differs or `T::instantiate` refuses; the error is logged too.
-    pub fn instantiate(
-        token: &str,
-        cx: &Instantiation<'_>,
-        logger: Logger,
-        debug: bool,
-    ) -> Result<Self, Error> {
+    pub fn instantiate(token: &str, context: Instantiation, logger: Logger) -> Result<Self, Error> {
         const { check(T::VARIABLES) };
         let refuse = |error: Error| {
-            logger.log(Status::Error, "logStatusError", error.message());
+            logger.error(error.message());
             error
         };
         if token != T::INSTANTIATION_TOKEN {
@@ -125,19 +115,12 @@ impl<T: Fmu> Instance<T> {
                 T::INSTANTIATION_TOKEN
             ))));
         }
-        let model = T::instantiate(cx).map_err(refuse)?;
-        let mut index: Vec<_> = (T::VARIABLES.iter())
-            .enumerate()
-            .map(|(at, variable)| (variable.value_reference, at))
-            .collect();
-        index.sort_unstable();
+        let model = T::instantiate(&context).map_err(refuse)?;
         Ok(Self {
             model,
+            context,
             logger,
-            debug,
             mode: Mode::Instantiated,
-            pending: true,
-            index,
         })
     }
 
@@ -151,8 +134,7 @@ impl<T: Fmu> Instance<T> {
         match result {
             Ok(()) => Status::Ok,
             Err(error) => {
-                self.logger
-                    .log(Status::Error, "logStatusError", error.message());
+                self.logger.error(error.message());
                 Status::Error
             }
         }
@@ -178,23 +160,17 @@ impl<T: Fmu> Instance<T> {
         Status::Fatal
     }
 
-    /// `fmi3SetDebugLogging`. An empty list means every category.
-    pub fn set_debug_logging(&mut self, on: bool, categories: &[&str]) -> Status {
-        let declared = <T::Log as crate::LogCategory>::CATEGORIES;
+    /// `fmi3SetDebugLogging`. fmite has no debug messages, so the call only checks
+    /// that every category is one the FMU declares.
+    pub fn set_debug_logging(&mut self, categories: &[&str]) -> Status {
         let unknown = (categories.iter())
-            .find(|category| !declared.iter().any(|(name, _)| name == *category));
-        if let Some(category) = unknown {
-            return self.answer(Err(Error::new(format!(
+            .find(|category| !LOG_CATEGORIES.iter().any(|(name, _)| name == *category));
+        match unknown {
+            Some(category) => self.answer(Err(Error::new(format!(
                 "this FMU declares no log category {category}"
-            ))));
+            )))),
+            None => Status::Ok,
         }
-        self.debug = on;
-        Status::Ok
-    }
-
-    /// Whether the importer asked for debug messages.
-    pub fn debug(&self) -> bool {
-        self.debug
     }
 
     /// `fmi3EnterInitializationMode`.
@@ -208,21 +184,12 @@ impl<T: Fmu> Instance<T> {
         self.answer(result)
     }
 
-    /// Runs `T::calculate` if a parameter changed since it last ran.
-    fn calculate(&mut self) -> Result<(), Error> {
-        if self.pending {
-            self.model.calculate(&Calculate(()))?;
-            self.pending = false;
-        }
-        Ok(())
-    }
-
     /// `fmi3ExitInitializationMode`.
     pub fn exit_initialization(&mut self) -> Status {
         let result = match self.mode {
             Mode::Initialization { start } => self
-                .calculate()
-                .and_then(|()| self.model.exit_initialization())
+                .model
+                .exit_initialization()
                 .map(|()| self.mode = Mode::Step(Clock::starting(start))),
             _ => Err(self.not_in("fmi3ExitInitializationMode")),
         };
@@ -241,22 +208,22 @@ impl<T: Fmu> Instance<T> {
         self.answer(result)
     }
 
-    /// `fmi3Reset`.
+    /// `fmi3Reset`: the model is instantiated again, from the same context.
     pub fn reset(&mut self) -> Status {
         let result = match self.mode {
             Mode::Fatal => Err(self.not_in("fmi3Reset")),
-            _ => self.model.reset().map(|()| {
+            _ => T::instantiate(&self.context).map(|model| {
+                self.model = model;
                 self.mode = Mode::Instantiated;
-                self.pending = true;
             }),
         };
         self.answer(result)
     }
 
-    fn variable(&self, vr: u32) -> Result<&'static Variable, Error> {
-        (self.index.binary_search_by_key(&vr, |(vr, _)| *vr))
-            .map(|at| &T::VARIABLES[self.index[at].1])
-            .map_err(|_| ValueReference(vr).unknown())
+    fn variable(vr: u32) -> Result<&'static Variable, Error> {
+        (T::VARIABLES.iter())
+            .find(|variable| variable.value_reference == vr)
+            .ok_or_else(|| ValueReference(vr).unknown())
     }
 
     /// The current time, `time`'s value.
@@ -276,11 +243,9 @@ impl<T: Fmu> Instance<T> {
     }
 
     fn try_get(&mut self, vrs: &[u32], mut out: ValuesMut<'_>) -> Result<(), Error> {
-        let function = "fmi3Get";
         match self.mode {
-            Mode::Initialization { .. } | Mode::Step(_) => self.calculate()?,
-            Mode::Terminated { .. } => {}
-            Mode::Instantiated | Mode::Fatal => return Err(self.not_in(function)),
+            Mode::Initialization { .. } | Mode::Step(_) | Mode::Terminated { .. } => {}
+            Mode::Instantiated | Mode::Fatal => return Err(self.not_in("fmi3Get")),
         }
         for &vr in vrs {
             if vr == 0 {
@@ -290,12 +255,12 @@ impl<T: Fmu> Instance<T> {
                 *slot = self.now();
                 continue;
             }
-            let variable = self.variable(vr)?;
+            let variable = Self::variable(vr)?;
             let chunk = variable.values_in(out.type_name(), out.len())?;
             let buffer = out.split_front(chunk).expect("chunk checked the length");
             self.model.get(ValueReference(vr), buffer)?;
         }
-        exhausted(out.len())
+        surplus(out.len())
     }
 
     /// `fmi3Set{Type}`: `values` holds the values of every reference, in order.
@@ -306,7 +271,7 @@ impl<T: Fmu> Instance<T> {
 
     fn try_set(&mut self, vrs: &[u32], mut values: Values<'_>) -> Result<(), Error> {
         for &vr in vrs {
-            let variable = self.variable(vr)?;
+            let variable = Self::variable(vr)?;
             let allowed = match self.mode {
                 Mode::Instantiated | Mode::Initialization { .. } => {
                     variable.settable_in_initialization
@@ -324,11 +289,8 @@ impl<T: Fmu> Instance<T> {
             let chunk = variable.values_in(values.type_name(), values.len())?;
             let slice = values.split_front(chunk).expect("chunk checked the length");
             self.model.set(ValueReference(vr), slice)?;
-            if variable.causality == causality::Parameter::NAME {
-                self.pending = true;
-            }
         }
-        exhausted(values.len())
+        surplus(values.len())
     }
 
     /// `fmi3GetFMUState`.
@@ -347,7 +309,6 @@ impl<T: Fmu> Instance<T> {
             mode => Ok(Saved {
                 model: self.model.clone(),
                 mode,
-                pending: self.pending,
             }),
         }
     }
@@ -362,7 +323,6 @@ impl<T: Fmu> Instance<T> {
         }
         self.model.clone_from(&saved.model);
         self.mode = saved.mode;
-        self.pending = saved.pending;
         Status::Ok
     }
 }
@@ -375,16 +335,13 @@ impl<T: CoSimulation> Instance<T> {
             return (status, false, self.now());
         };
         let step = Step { current, size };
-        let result = clock
-            .check_start(current)
-            .and_then(|()| self.calculate())
-            .and_then(|()| {
-                let mut next = clock;
-                next.advance(step, T::FIXED_INTERNAL_STEP_SIZE)?;
-                let result = self.model.do_step(step)?;
-                clock = next;
-                Ok(result)
-            });
+        let result = clock.check_start(current).and_then(|()| {
+            let mut next = clock;
+            next.advance(step, T::FIXED_INTERNAL_STEP_SIZE)?;
+            let result = self.model.do_step(step)?;
+            clock = next;
+            Ok(result)
+        });
         self.mode = Mode::Step(clock);
         match result {
             Ok(result) => (Status::Ok, result == StepResult::Terminate, clock.now),
@@ -393,28 +350,20 @@ impl<T: CoSimulation> Instance<T> {
     }
 }
 
-fn exhausted(left: usize) -> Result<(), Error> {
-    if left == 0 {
-        Ok(())
-    } else {
-        Err(Error::new(format!(
-            "{left} values more than the variables take"
-        )))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_model::Gain;
 
-    const CX: Instantiation<'static> = Instantiation {
-        instance_name: "test",
-        resource_path: None,
-    };
+    fn context() -> Instantiation {
+        Instantiation {
+            instance_name: "test".to_owned(),
+            resource_path: None,
+        }
+    }
 
     fn stepping() -> Instance<Gain> {
-        let mut instance = Instance::instantiate("{gain}", &CX, Logger::silent(), false).unwrap();
+        let mut instance = Instance::instantiate("{gain}", context(), Logger::silent()).unwrap();
         assert_eq!(instance.set(&[2], Values::Float64(&[3.0])), Status::Ok);
         assert_eq!(instance.enter_initialization(0.0, None), Status::Ok);
         assert_eq!(instance.exit_initialization(), Status::Ok);
@@ -429,7 +378,7 @@ mod tests {
 
     #[test]
     fn a_wrong_token_refuses_instantiation() {
-        assert!(Instance::<Gain>::instantiate("{other}", &CX, Logger::silent(), false).is_err());
+        assert!(Instance::<Gain>::instantiate("{other}", context(), Logger::silent()).is_err());
     }
 
     #[test]
@@ -444,9 +393,11 @@ mod tests {
     }
 
     #[test]
-    fn a_tunable_parameter_set_in_step_mode_recalculates() {
+    fn a_tunable_parameter_set_in_step_mode_takes_effect_at_the_next_step() {
         let mut instance = stepping();
         assert_eq!(instance.set(&[2], Values::Float64(&[5.0])), Status::Ok);
+        assert_eq!(get_f64::<1>(&mut instance, &[3]), [6.0]);
+        assert_eq!(instance.do_step(0.0, 0.1).0, Status::Ok);
         assert_eq!(get_f64::<1>(&mut instance, &[3]), [10.0]);
     }
 
@@ -466,7 +417,7 @@ mod tests {
     #[test]
     fn the_state_machine_refuses_calls_out_of_order() {
         let mut instance =
-            Instance::<Gain>::instantiate("{gain}", &CX, Logger::silent(), false).unwrap();
+            Instance::<Gain>::instantiate("{gain}", context(), Logger::silent()).unwrap();
         assert_eq!(instance.do_step(0.0, 0.1).0, Status::Error);
         assert_eq!(instance.exit_initialization(), Status::Error);
         assert_eq!(instance.terminate(), Status::Error);
@@ -534,11 +485,19 @@ mod tests {
     }
 
     #[test]
-    fn reset_returns_to_instantiated_with_default_values() {
+    fn reset_instantiates_the_model_again() {
         let mut instance = stepping();
         instance.do_step(0.0, 0.1);
         assert_eq!(instance.reset(), Status::Ok);
         assert_eq!(*instance.model().k, 0.0);
         assert_eq!(instance.enter_initialization(0.0, None), Status::Ok);
+    }
+
+    #[test]
+    fn debug_logging_accepts_only_the_declared_categories() {
+        let mut instance = stepping();
+        assert_eq!(instance.set_debug_logging(&[]), Status::Ok);
+        assert_eq!(instance.set_debug_logging(&["logStatusError"]), Status::Ok);
+        assert_eq!(instance.set_debug_logging(&["logEvents"]), Status::Error);
     }
 }
