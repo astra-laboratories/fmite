@@ -2,11 +2,22 @@
 name = "fmite"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.88"
 description = "FMI 3.0 in Rust: write a model as a safe trait, get a conformant FMU"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 keywords = ["fmi", "fmu", "co-simulation", "simulation"]
 categories = ["simulation", "science"]
 
+[workspace]
+members = ["examples/battery", "fmite-derive"]
+
+[features]
+# Writing the FMU archive, `fmite::package::package`.
+package = ["dep:zip"]
+# `#[derive(Variables, Enumeration)]`.
+derive = ["dep:fmite-derive"]
+
 [dependencies]
+fmite-derive = { path = "fmite-derive", version = "0.1.0", optional = true }
+zip = { version = "8", default-features = false, optional = true }

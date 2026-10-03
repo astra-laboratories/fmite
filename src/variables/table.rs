@@ -33,8 +33,12 @@ pub trait InitialFor<C, V: ?Sized>: Initial {}
 /// write it.
 pub trait Writable<V> {}
 
+/// `C` with variability `V` is calculated once, from the parameters, so model code
+/// writes it only through a [`Calculate`](crate::Calculate) token.
+pub trait Calculable<V> {}
+
 /// One line per row: `C: V => [default initial, other initials] flags`, where the
-/// flags are `initialization`, `step` and `writable`.
+/// flags are `initialization`, `step`, `writable` and `calculated`.
 macro_rules! table {
     ($($c:ident: $v:ident => [$default:ident $(, $other:ident)*] $($flag:ident)*;)*) => {
         $(
@@ -45,7 +49,7 @@ macro_rules! table {
             }
             impl InitialFor<causality::$c, $v> for $default {}
             $(impl InitialFor<causality::$c, $v> for $other {})*
-            $(writable!($flag $c $v);)*
+            $(write_flag!($flag $c $v);)*
         )*
     };
 }
@@ -58,10 +62,13 @@ macro_rules! flag {
     ($wanted:ident in) => { false };
 }
 
-/// The `Writable` impl for a row flagged `writable`.
-macro_rules! writable {
+/// The `Writable` or `Calculable` impl for a row flagged `writable` or `calculated`.
+macro_rules! write_flag {
     (writable $c:ident $v:ident) => {
         impl Writable<$v> for causality::$c {}
+    };
+    (calculated $c:ident $v:ident) => {
+        impl Calculable<$v> for causality::$c {}
     };
     ($flag:ident $c:ident $v:ident) => {};
 }
@@ -69,16 +76,16 @@ macro_rules! writable {
 table! {
     Parameter: Fixed => [Exact] initialization;
     Parameter: Tunable => [Exact] initialization step;
-    CalculatedParameter: Fixed => [Calculated];
-    CalculatedParameter: Tunable => [Calculated];
+    CalculatedParameter: Fixed => [Calculated] calculated;
+    CalculatedParameter: Tunable => [Calculated] calculated;
     Input: Discrete => [Exact] initialization step;
     Input: Continuous => [Exact] initialization step;
     Output: Constant => [Exact];
     Output: Discrete => [Calculated, Exact] initialization writable;
     Output: Continuous => [Calculated, Exact] initialization writable;
     Local: Constant => [Exact];
-    Local: Fixed => [Calculated];
-    Local: Tunable => [Calculated];
+    Local: Fixed => [Calculated] calculated;
+    Local: Tunable => [Calculated] calculated;
     Local: Discrete => [Calculated, Exact] initialization writable;
     Local: Continuous => [Calculated, Exact] initialization writable;
 }

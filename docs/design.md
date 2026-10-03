@@ -1,7 +1,9 @@
 # fmite design
 
-Status: a proposal for review. Nothing here is implemented. Names and signatures are
-expected to change.
+Status: Co-Simulation export is implemented through packaging, and
+`examples/battery` builds, packages and runs as an FMU. Scheduled Execution, Model
+Exchange, String and Binary variables, and model-side logging are still designs. Names
+and signatures are expected to change.
 
 ## Scope
 
@@ -194,10 +196,17 @@ missed, not its own message.
 Variability also decides who may write. `Field` is `#[repr(transparent)]` over
 `T`, and `Deref` is implemented on every wrapper. `DerefMut` is implemented only on
 `Output` and `Local`, and only where `V` is `Discrete` or `Continuous`, so
-`*self.c = …` on an `Output<f64, (), Constant>` does not compile. A `fixed` or
-`tunable` `Local` and a `CalculatedParameter` are written during initialization, and
-a tunable one again when a parameter changes. How model code writes them then,
-without a `DerefMut` it could also use in `do_step`, is an open question.
+`*self.c = …` on an `Output<f64, (), Constant>` does not compile.
+
+A `fixed` or `tunable` `Local` and a `CalculatedParameter` are computed from the
+parameters: once at the end of initialization, and a tunable one again whenever a
+parameter changes. They are written through a token. `Calculate` is a zero-sized type
+that only fmite can construct, and `Field::calculate(&mut self, &Calculate) -> &mut T`
+exists only on the rows that `table!` flags `calculated`. fmite passes a `&Calculate`
+to one hook, `Fmu::calculate`. The instance calls it before Step Mode and again before
+the next `get` or `do_step` after the importer sets a parameter. `do_step` holds no
+token, so it cannot write a calculated variable, and the compiler, not a review,
+enforces that.
 
 The importer's writes to inputs and parameters go through a `#[doc(hidden)]` path
 that the derive calls. Hand-written code could call it too. What the types guarantee
@@ -225,9 +234,16 @@ A sealed trait, `FmiType`, maps Rust types to FMI types:
 | `#[derive(fmite::Enumeration)]` | `Enumeration` + `EnumerationType`   |
 
 Array dimensions come from const generics, so `<Dimension>` cannot disagree with the
-field. An enumeration crosses the C API as `Int64`. The instance converts it with
-`TryFrom<i64>`, so an importer that sends an integer with no variant gets `fmi3Error`,
-and the model only ever holds a valid `Mode`.
+field. An enumeration crosses the C API as `Int64`. The `Enumeration` trait names its
+items and converts with `to_i64` and `from_i64`. An importer that sends an integer
+with no item gets `fmi3Error`, and the model only ever holds a valid `Mode`. Every
+`Enumeration` is an `FmiType` through one blanket impl. That impl takes a seal of its
+own (`sealed::Value`), so an author's enum never gains the crate-wide seal, which would
+let it implement `Float` or `Causality`.
+
+`String` and `Vec<u8>` are not `FmiType`s yet. A get returns pointers the FMU must keep
+alive until the next call, which `get_into` cannot express, and every other type is
+`Copy`, which makes an importer's set all-or-nothing.
 
 ### Units are types
 
@@ -415,19 +431,22 @@ pub trait Fmu: Variables + Default + Sized {
     type Log: LogCategory; // `()` when the FMU logs no categories
 
     const DESCRIPTION: Option<&'static str> = None;
+    const DEFAULT_EXPERIMENT: Experiment = Experiment::NONE;
 
     fn instantiate(cx: &Instantiation<'_>) -> Result<Self, Error> { Ok(Self::default()) }
     fn enter_initialization(&mut self, start: f64, stop: Option<f64>) -> Result<(), Error> { Ok(()) }
+    fn calculate(&mut self, calculate: &Calculate) -> Result<(), Error> { Ok(()) }
     fn exit_initialization(&mut self) -> Result<(), Error> { Ok(()) }
     fn terminate(&mut self) -> Result<(), Error> { Ok(()) }
     fn reset(&mut self) -> Result<(), Error> { *self = Self::default(); Ok(()) }
 }
 ```
 
-Every method has a default, so a model that needs no setup implements `Fmu` in one
-line. `Log` is a type and not a list of strings. The implementor's enum derives
-`LogCategory`, `<LogCategories>` is written from it, and `log!(cx, Category::Solver,
-…)` cannot name a category the FMU did not declare.
+Every method has a default, so a model that needs no setup implements `Fmu` in two
+lines. `Log` is a type and not a list of strings. `<LogCategories>` is written from it
+today. The model-side half is still a design: the implementor's enum derives
+`LogCategory`, and `log!(cx, Category::Solver, …)` cannot name a category the FMU did
+not declare.
 
 ### One trait per interface
 
@@ -555,15 +574,21 @@ fmite-derive (feature)   Variables, Enumeration, Partition, LogCategory
 ### `abi`
 
 This module is a Rust transcription of `fmi3PlatformTypes.h` and
-`fmi3FunctionTypes.h`. It covers `fmi3Status`, the scalar typedefs, the instance and
-state handles, the callback types, and one type alias per function.
+`fmi3FunctionTypes.h`. It covers `fmi3Status`, the enums, the handles and the callback
+types, plus the logger that calls back across the boundary. The scalar typedefs are
+Rust's own types. The function signatures are written once, in `export!`, which
+forwards each symbol to a generic function in `fmite::export`. All the `unsafe` code
+lives there, not in the implementor's crate.
 
 There is no bindgen. The headers are stable, published documents, so transcribing them
 once costs less than putting libclang on every user's machine.
 
-Drift is caught by a dev-only test. It compiles a C file against the vendored official
-headers, and the C file assigns every symbol of an example FMU to the header's
-function-pointer type. If a signature drifts, CI fails; a user's build never does.
+Drift is caught by a dev-only test. `tests/abi.c` assigns all 75 functions, by the
+header's prototypes, to the header's own function types, and
+`examples/battery/tests/abi.rs` links it against the example's `cdylib`. A missing or
+misspelt symbol fails the link. C cannot see Rust's parameter types, so a wrong
+parameter type gets past this test. An importer catches it at runtime, which is why the
+example also runs through one (see the verification notes in the README).
 
 ### `instance`
 
@@ -605,8 +630,11 @@ has no exact f64 representation, and ten steps of 0.1 do not add up to 1.0. So f
 - passes the raw values in `Step`, so nothing is rounded without the implementor
   seeing it;
 - offers `Step::ticks(period) -> Result<u64, Error>`, which rounds to the nearest whole
-  number of ticks within a documented relative tolerance, and refuses a step that is
-  not close to a whole number of them;
+  number of ticks within `TICK_TOLERANCE`, a relative `1e-9`, and refuses a step that
+  is not close to a whole number of them. An importer's sums are off by a few ulps, and
+  `1e-9` allows some million times that, while still refusing any real fraction of a
+  tick;
+- refuses a step that does not start where the last one ended;
 - tracks time as `start + ticks × period` instead of summing step sizes, so error does
   not accumulate over a long run.
 
@@ -625,7 +653,11 @@ dependencies. Nothing in it is set by hand. It is assembled from:
   `<ModelExchange>` element for each one in the export list, with their flags from the
   traits' consts;
 - the capability list: `canGetAndSetFMUState`, `canSerializeFMUState`;
-- `<ModelStructure>`, with `dependencies` always written explicitly;
+- `<ModelStructure>`, with `dependencies` always written explicitly: an output
+  depends on no input, since model code writes outputs only in hooks and steps and
+  never in a `set`, so there is no direct feedthrough; an initial unknown depends on
+  every variable settable during initialization, the coarsest truthful answer until
+  `Variables` says which feed which;
 - `Variables`: `<UnitDefinitions>`, one `<Unit>` per distinct unit name the variables
   carry, refused if two of them share a name and differ in `Unit`;
 - `<DefaultExperiment>`.
@@ -640,10 +672,14 @@ over. Packaging is therefore a host-side call on the type, not a method on an
 instance:
 
 ```rust
-fmite::package::<Thermostat>(&[
-    ("x86_64-linux", "target/x86_64-unknown-linux-gnu/release/libthermostat.so"),
-    ("aarch64-darwin", "target/aarch64-apple-darwin/release/libthermostat.dylib"),
-], "thermostat.fmu")?;
+use std::path::Path;
+use fmite::package::{Binary, package};
+
+let linux = Path::new("target/x86_64-unknown-linux-gnu/release/libthermostat.so");
+package::<Thermostat>(&[
+    Binary { platform: "x86_64-linux", path: linux },
+    Binary::host(Path::new("target/release/libthermostat.dylib"))?,
+], Path::new("thermostat.fmu"))?;
 ```
 
 The host links the implementor's crate as an rlib, builds the description from the
@@ -687,13 +723,14 @@ right instinct. fmite moves the facts out of attributes and into types:
 - Magnetite's glue declares a fixed-step model's float outputs `Discrete`, because
   they are piecewise constant. Should fmite also default floats to `discrete` when
   the FMU implements only Co-Simulation, or stay with the standard's default?
-- How does model code write a `fixed` or `tunable` `Local` and a
-  `CalculatedParameter` during initialization, without a `DerefMut` that would also
-  let `do_step` write them?
 - Should `do_step` receive the importer's `noSetFMUStatePriorToCurrentPoint`, or should
   `Instance` keep that to itself?
-- What relative tolerance should `Step::ticks` use, and should the implementor be able
-  to choose it?
+- Should the implementor be able to choose `Step::ticks`'s tolerance?
+- How should `Variables` state which inputs each output depends on, so that
+  `<ModelStructure>` can be finer than "every input"?
+- `#[derive(Variables)]` recognises a variable by the last segment of its field's type
+  (`Input`, `Output`, …), so a type alias hides one. Should it take a
+  `#[variable]` marker instead, or as well?
 - `reset` defaults to `*self = Self::default()`. That drops anything `instantiate`
   took from the `Instantiation`, such as the resource path. Should `Instance` keep the
   context and call `instantiate` again instead?

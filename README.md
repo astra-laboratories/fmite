@@ -19,8 +19,10 @@ model is exactly that, so this is where fmite starts.
 - **The default build has no dependencies.** Packaging an FMU is an optional feature
   and a library call, not a separate binary.
 
-> Status: design. Nothing below is implemented yet. [`docs/design.md`](docs/design.md)
-> holds the proposed layers and traits for review.
+> Status: Co-Simulation export works end to end. [`examples/battery`](examples/battery)
+> is packaged as an FMU, its model description validates against the standard's XSD,
+> and an independent importer simulates it. The matrix below marks what is not done
+> yet. [`docs/design.md`](docs/design.md) holds the layers and traits.
 
 ## Feature matrix
 
@@ -61,8 +63,8 @@ model has no derivatives to give them.
 | `fmi3Get/SetInt8`, `UInt8`, `Int16`, `UInt16`               | v0.1   |
 | `fmi3Get/SetInt32`, `UInt32`, `Int64`, `UInt64`             | v0.1   |
 | `fmi3Get/SetBoolean`                                        | v0.1   |
-| `fmi3Get/SetString`                                         | v0.1   |
-| `fmi3Get/SetBinary`                                         | v0.1   |
+| `fmi3Get/SetString`                                         | later  |
+| `fmi3Get/SetBinary`                                         | later  |
 | `fmi3Get/SetClock`                                          | later  |
 | `fmi3Get/SetIntervalDecimal`, `fmi3Get/SetIntervalFraction` | later  |
 | `fmi3Get/SetShiftDecimal`, `fmi3Get/SetShiftFraction`       | later  |
@@ -75,8 +77,8 @@ which change in configuration mode, come later.
 | Function                                                 | Status |
 | -------------------------------------------------------- | ------ |
 | `fmi3GetFMUState`, `fmi3SetFMUState`, `fmi3FreeFMUState` | v0.1   |
-| `fmi3SerializedFMUStateSize`, `fmi3SerializeFMUState`    | v0.1   |
-| `fmi3DeserializeFMUState`                                | v0.1   |
+| `fmi3SerializedFMUStateSize`, `fmi3SerializeFMUState`    | later  |
+| `fmi3DeserializeFMUState`                                | later  |
 
 These are available when the model implements `State`. The capability flags in
 `modelDescription.xml` follow from whether it does.

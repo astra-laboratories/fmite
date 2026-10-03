@@ -6,7 +6,8 @@ use core::ops::{Deref, DerefMut};
 
 use super::causality::{self, Causality};
 use super::unit::UnitOf;
-use super::{Fixed, FmiType, InitialFor, VariabilityFor, VariabilityOf, Writable};
+use super::{Calculable, Fixed, FmiType, InitialFor, VariabilityFor, VariabilityOf, Writable};
+use crate::{Calculate, Error, Values, ValuesMut};
 
 /// Every bound a [`Field`] needs, in one place.
 pub trait Valid {}
@@ -91,6 +92,59 @@ where
     }
 }
 
+impl<C, T: FmiType, U, V, I> Field<C, T, U, V, I>
+where
+    (C, T, U, V, I): Valid,
+{
+    /// Writes the value to a get buffer, for a hand-written `Variables::get`.
+    ///
+    /// # Errors
+    ///
+    /// When `out` is not of this field's FMI type, or not of its length.
+    pub fn get_into(&self, mut out: ValuesMut<'_>) -> Result<(), Error> {
+        let mut at = 0;
+        self.0.read(&mut out, &mut at)?;
+        exhausted(at, out.len())
+    }
+
+    /// Sets the value from the importer's values, for `Variables::set`. Model code has
+    /// no use for it, and the types cannot stop it calling it; they stop it writing an
+    /// input by accident, not on purpose. Atomic: on an error the value is unchanged.
+    ///
+    /// # Errors
+    ///
+    /// When `values` are not of this field's FMI type, or not of its length, or an
+    /// enumeration value has no item.
+    #[doc(hidden)]
+    pub fn importer_set(&mut self, values: Values<'_>) -> Result<(), Error> {
+        let mut next = self.0;
+        let mut at = 0;
+        next.write(&values, &mut at)?;
+        exhausted(at, values.len())?;
+        self.0 = next;
+        Ok(())
+    }
+}
+
+fn exhausted(used: usize, len: usize) -> Result<(), Error> {
+    if used == len {
+        Ok(())
+    } else {
+        Err(Error::new("too many values for the variable"))
+    }
+}
+
+impl<C: Calculable<V>, T, U, V, I> Field<C, T, U, V, I>
+where
+    (C, T, U, V, I): Valid,
+{
+    /// Writes a calculated parameter, or a fixed or tunable local. Only the
+    /// initialization hooks hold a [`Calculate`], so `do_step` cannot.
+    pub fn calculate(&mut self, _: &Calculate) -> &mut T {
+        &mut self.0
+    }
+}
+
 impl<C, T: Default, U, V, I> Default for Field<C, T, U, V, I>
 where
     (C, T, U, V, I): Valid,
@@ -129,5 +183,22 @@ mod tests {
         *output = *input * 3.0;
         assert_eq!(*output, 6.0);
         assert_eq!(*output.clone(), 6.0);
+    }
+
+    #[test]
+    fn the_importer_sets_all_or_nothing() {
+        let mut cells = Input::<[f64; 2]>::default();
+        cells.importer_set(Values::Float64(&[1.0, 2.0])).unwrap();
+        assert!(
+            cells
+                .importer_set(Values::Float64(&[3.0, 4.0, 5.0]))
+                .is_err()
+        );
+        assert!(cells.importer_set(Values::Float64(&[3.0])).is_err());
+        assert_eq!(*cells, [1.0, 2.0]);
+
+        let mut out = [0.0; 2];
+        cells.get_into(ValuesMut::Float64(&mut out)).unwrap();
+        assert_eq!(out, [1.0, 2.0]);
     }
 }
