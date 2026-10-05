@@ -1,9 +1,10 @@
 # fmite
 
-FMI 3.0 Co-Simulation export for Rust. A model is a struct whose field types say what
-each variable is. From that struct fmite writes the 75 `fmi3*` C functions,
-`modelDescription.xml` and the `.fmu` archive, and it checks every call the importer
-makes before the model sees it.
+FMI 3.0 export for Rust. fmite aims at the whole standard: Co-Simulation, Model Exchange
+and Scheduled Execution. Co-Simulation is the part implemented today. A model is a
+struct whose field types say what each variable is. From that struct fmite writes the 75
+`fmi3*` C functions, `modelDescription.xml` and the `.fmu` archive, and it checks every
+call the importer makes before the model sees it.
 
 This page is the crate documentation and a test suite in one. Every code block
 compiles and runs under `cargo test`; every block marked `compile_fail` is a rule of
