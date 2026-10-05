@@ -7,11 +7,12 @@
 #![warn(unused_crate_dependencies)]
 
 pub mod abi;
+mod co_simulation;
 pub mod description;
 mod error;
 pub mod export;
+mod fmu;
 mod instance;
-mod model;
 #[cfg(feature = "package")]
 pub mod package;
 #[cfg(test)]
@@ -19,11 +20,12 @@ mod test_model;
 mod values;
 mod variables;
 
+pub use co_simulation::*;
 pub use error::Error;
 #[cfg(feature = "derive")]
 pub use fmite_derive::{Enumeration, Variables};
+pub use fmu::*;
 pub use instance::{Instance, Saved};
-pub use model::*;
 pub use values::{Carrier, Values, ValuesMut};
 pub use variables::*;
 
