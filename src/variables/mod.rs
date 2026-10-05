@@ -15,6 +15,7 @@ macro_rules! named {
 }
 
 pub mod causality;
+mod dims;
 mod enumeration;
 mod field;
 mod fmi_type;
@@ -25,6 +26,7 @@ pub mod unit;
 mod variability;
 mod variable;
 
+pub use dims::*;
 pub use enumeration::*;
 pub use field::*;
 pub use fmi_type::*;
