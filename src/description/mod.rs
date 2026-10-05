@@ -1,16 +1,19 @@
-//! `modelDescription.xml`, written from the model's types. Nothing in it is set by hand:
-//! the variables and their attributes come from `Variables`, the units and enumeration
-//! types from the variables' types, the interface element from `CoSimulation` and the
-//! export list, and the start values from `T::default()`.
+//! `modelDescription.xml`, written from the model's types. Nothing is set by hand:
+//! variables and their attributes come from `Variables`, units and enumeration types
+//! from the variables' types, the interface element from `CoSimulation` and the export
+//! list, and start values from `T::default()`.
 
-use core::fmt::Write as _;
+mod xml;
+
+use xml::{Xml, number};
 
 use crate::export::Exported;
+use crate::log;
 use crate::unit::Unit;
-use crate::{CoSimulation, Error, Fmu, Kind, LOG_CATEGORIES, ValueReference, ValuesMut, Variable};
+use crate::{CoSimulation, Error, Fmu, Kind, ValueReference, ValuesMut, Variable};
 
-/// The `modelIdentifier`: the model name with `-` as `_`, which is also the file name
-/// Cargo gives the `cdylib`.
+/// The `modelIdentifier`: the model name with `-` replaced by `_`. Cargo gives the
+/// `cdylib` the same file name.
 #[must_use]
 pub fn model_identifier<T: Fmu>() -> String {
     T::MODEL_NAME.replace('-', "_")
@@ -20,11 +23,9 @@ pub fn model_identifier<T: Fmu>() -> String {
 ///
 /// # Errors
 ///
-/// When `T::default()` cannot give a start value its `VARIABLES` promise.
+/// When `T::default()` cannot provide a start value that `VARIABLES` promises.
 pub fn model_description<T: CoSimulation + Exported>() -> Result<String, Error> {
-    let mut xml = Xml::default();
-    xml.out
-        .push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    let mut xml = Xml::document();
     let mut root = vec![
         ("fmiVersion", "3.0".to_owned()),
         ("modelName", T::MODEL_NAME.to_owned()),
@@ -54,7 +55,7 @@ pub fn model_description<T: CoSimulation + Exported>() -> Result<String, Error> 
     type_definitions(&mut xml, T::VARIABLES);
 
     xml.open("LogCategories", &[]);
-    for (name, description) in LOG_CATEGORIES {
+    for (name, description) in log::CATEGORIES {
         xml.empty(
             "Category",
             &[
@@ -97,11 +98,11 @@ pub fn model_description<T: CoSimulation + Exported>() -> Result<String, Error> 
 
     model_structure(&mut xml, T::VARIABLES);
     xml.close("fmiModelDescription");
-    Ok(xml.out)
+    Ok(xml.finish())
 }
 
-/// The items of `all` with distinct `name`s, in order of first use. `check` has refused
-/// two definitions of one name, so the first is the definition.
+/// The items of `all` with distinct `name`s, in order of first use. `check` has already
+/// rejected two definitions under one name, so the first one is the definition.
 fn distinct<'a, T>(all: impl Iterator<Item = &'a T>, name: fn(&T) -> &str) -> Vec<&'a T> {
     let mut seen: Vec<&T> = Vec::new();
     for item in all {
@@ -130,7 +131,7 @@ fn unit_definitions(xml: &mut Xml, variables: &[Variable]) {
     xml.close("UnitDefinitions");
 }
 
-/// `<BaseUnit>`'s attributes, each left out at its default: 0 for an exponent, 1 for
+/// `<BaseUnit>`'s attributes, each omitted at its default: 0 for an exponent, 1 for
 /// the factor, 0 for the offset.
 fn base_unit(unit: &Unit) -> Vec<(&'static str, String)> {
     let exponents = [
@@ -212,8 +213,8 @@ fn model_variable<T: Fmu>(xml: &mut Xml, model: &T, variable: &Variable) -> Resu
     Ok(())
 }
 
-/// The variable's value in `model`, as the `start` attribute writes it: a list,
-/// row-major, for an array.
+/// The variable's value in `model` as `start` attribute text. An array is a row-major
+/// list.
 fn start<T: Fmu>(model: &T, variable: &Variable) -> Result<String, Error> {
     let vr = ValueReference(variable.value_reference);
     let count = variable.dims.count();
@@ -240,24 +241,16 @@ fn start<T: Fmu>(model: &T, variable: &Variable) -> Result<String, Error> {
     Ok(values.join(" "))
 }
 
-/// A float as `xs:double` writes it: the shortest text that reads back exactly.
-fn number(x: f64) -> String {
-    if x.is_nan() {
-        "NaN".to_owned()
-    } else if x.is_infinite() {
-        if x > 0.0 { "INF" } else { "-INF" }.to_owned()
-    } else {
-        x.to_string()
-    }
-}
-
-/// `<ModelStructure>`, every `dependencies` written out. An output depends on no input:
-/// model code writes an output only in a hook or a step, never in a `set`, so an input
-/// set at a communication point reaches no output before the next `fmi3DoStep`. There
-/// is no direct feedthrough, and an importer can close a loop through the FMU without
-/// an algebraic one. An initial unknown depends on every variable the importer may set
-/// during initialization: the hooks read whichever they like, so that is the coarsest
-/// truthful answer, and a finer one needs the model to say which feed it.
+/// `<ModelStructure>`, with every `dependencies` written out.
+///
+/// No output depends on an input. Model code writes outputs only in a hook or a step,
+/// never in a `set`, so an input set at a communication point reaches no output before
+/// the next `fmi3DoStep`. With no direct feedthrough, an importer can close a loop
+/// through the FMU without making an algebraic loop.
+///
+/// An initial unknown depends on every variable the importer may set during
+/// initialization. The hooks may read any of them, so this is the coarsest true answer.
+/// A finer one would need the model to say which variables each hook reads.
 fn model_structure(xml: &mut Xml, variables: &[Variable]) {
     let list = |keep: fn(&Variable) -> bool| {
         (variables.iter())
@@ -290,54 +283,6 @@ fn model_structure(xml: &mut Xml, variables: &[Variable]) {
         );
     }
     xml.close("ModelStructure");
-}
-
-/// An indenting XML writer, enough for a model description.
-#[derive(Default)]
-struct Xml {
-    out: String,
-    depth: usize,
-}
-
-impl Xml {
-    fn start(&mut self, name: &str, attributes: &[(&str, String)]) {
-        let indent = "  ".repeat(self.depth);
-        let _ = write!(self.out, "{indent}<{name}");
-        for (key, value) in attributes {
-            let _ = write!(self.out, " {key}=\"{}\"", escape(value));
-        }
-    }
-
-    fn open(&mut self, name: &str, attributes: &[(&str, String)]) {
-        self.start(name, attributes);
-        self.out.push_str(">\n");
-        self.depth += 1;
-    }
-
-    fn empty(&mut self, name: &str, attributes: &[(&str, String)]) {
-        self.start(name, attributes);
-        self.out.push_str("/>\n");
-    }
-
-    fn close(&mut self, name: &str) {
-        self.depth -= 1;
-        let indent = "  ".repeat(self.depth);
-        let _ = writeln!(self.out, "{indent}</{name}>");
-    }
-}
-
-fn escape(text: &str) -> String {
-    let mut escaped = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '&' => escaped.push_str("&amp;"),
-            '<' => escaped.push_str("&lt;"),
-            '>' => escaped.push_str("&gt;"),
-            '"' => escaped.push_str("&quot;"),
-            c => escaped.push(c),
-        }
-    }
-    escaped
 }
 
 #[cfg(test)]
@@ -420,19 +365,5 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-    }
-
-    #[test]
-    fn attribute_text_is_escaped() {
-        assert_eq!(escape(r#"a < b & "c""#), "a &lt; b &amp; &quot;c&quot;");
-    }
-
-    #[test]
-    fn floats_are_written_as_xs_double() {
-        assert_eq!(number(0.1), "0.1");
-        assert_eq!(number(273.15), "273.15");
-        assert_eq!(number(f64::INFINITY), "INF");
-        assert_eq!(number(f64::NEG_INFINITY), "-INF");
-        assert_eq!(number(f64::NAN), "NaN");
     }
 }

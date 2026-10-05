@@ -1,16 +1,12 @@
-//! The C ABI of FMI 3.0, transcribed by hand from the 3.0.1 headers
-//! (`fmi3PlatformTypes.h`, `fmi3FunctionTypes.h`), and the one thing that calls back
-//! across it: the importer's logger.
+//! The C ABI of FMI 3.0, copied by hand from the 3.0.1 headers (`fmi3PlatformTypes.h`,
+//! `fmi3FunctionTypes.h`).
 //!
-//! The scalar typedefs are Rust's own types (`fmi3Float64` is `f64`, `fmi3Boolean` is
-//! `bool`, `fmi3ValueReference` is `u32`), so they need no aliases here. The function
-//! signatures live in [`export!`](crate::export!), and `tests/abi.c` checks every one of
-//! them against the headers.
-
-#![allow(unsafe_code)]
+//! The scalar typedefs are plain Rust types (`fmi3Float64` is `f64`, `fmi3Boolean` is
+//! `bool`, `fmi3ValueReference` is `u32`), so they need no aliases. The function
+//! signatures are in [`export!`](crate::export!), and `tests/abi.c` checks each one
+//! against the headers.
 
 use core::ffi::{c_char, c_void};
-use std::ffi::CString;
 
 /// `fmi3Status`.
 #[repr(C)]
@@ -76,57 +72,3 @@ pub type IntermediateUpdateCallback = Option<
 
 /// `fmi3LockPreemptionCallback` and `fmi3UnlockPreemptionCallback`.
 pub type PreemptionCallback = Option<unsafe extern "C" fn()>;
-
-/// The importer's logger: its callback and the environment it passes back.
-pub struct Logger {
-    environment: Handle,
-    callback: LogMessageCallback,
-}
-
-impl Logger {
-    /// A logger that drops every message, for instances made in Rust.
-    #[must_use]
-    pub const fn silent() -> Self {
-        Self {
-            environment: core::ptr::null_mut(),
-            callback: None,
-        }
-    }
-
-    /// # Safety
-    ///
-    /// `callback`, if any, must be a function the importer keeps valid for the life of
-    /// the instance, and `environment` the pointer it expects back.
-    #[must_use]
-    pub unsafe fn new(environment: Handle, callback: LogMessageCallback) -> Self {
-        Self {
-            environment,
-            callback,
-        }
-    }
-
-    /// Logs a refused call under `logStatusError`.
-    pub fn error(&self, message: &str) {
-        self.log(Status::Error, "logStatusError", message);
-    }
-
-    /// Passes a message to the importer. An interior NUL, which C cannot carry, becomes
-    /// a space.
-    pub fn log(&self, status: Status, category: &str, message: &str) {
-        let Some(callback) = self.callback else {
-            return;
-        };
-        let c = |text: &str| CString::new(text.replace('\0', " ")).unwrap_or_default();
-        let (category, message) = (c(category), c(message));
-        // SAFETY: `new`'s contract makes the callback and environment valid, and both
-        // strings outlive the call.
-        unsafe {
-            callback(
-                self.environment,
-                status,
-                category.as_ptr(),
-                message.as_ptr(),
-            );
-        }
-    }
-}

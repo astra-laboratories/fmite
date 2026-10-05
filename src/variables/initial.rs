@@ -2,7 +2,7 @@
 
 use crate::sealed::Sealed;
 
-/// An initial marker. `NAME` is its `initial` attribute. `approx` is left out until
+/// An initial marker. `NAME` is its `initial` attribute. `approx` is omitted until
 /// Model Exchange needs it.
 pub trait Initial: Sealed {
     const NAME: &'static str;

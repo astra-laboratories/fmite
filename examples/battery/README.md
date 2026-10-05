@@ -17,9 +17,9 @@ one struct, and every fact in its `modelDescription.xml` comes from a field's ty
 | `charges: Output<u32>`                              | an integer, discrete by default                                       |
 | `charge: f64`                                       | a plain field: private state, not a variable                          |
 
-The start values are `Battery::default()`. `#[derive(Variables)]` numbers the variables in
-field order; `tests/derive.rs` holds the hand-written list it replaces, and checks that
-the two are equal.
+The start values come from `Battery::default()`. `#[derive(Variables)]` numbers the
+variables in field order. `tests/derive.rs` holds the hand-written list it replaces and
+checks that the two are equal.
 
 ## Build and package
 
@@ -28,9 +28,9 @@ cargo build -p battery
 cargo run -p battery --bin package -- battery.fmu
 ```
 
-The first builds the `cdylib`, whose `fmi3…` symbols `fmite::export!(Battery:
-CoSimulation + State)` makes. The second links the model as an rlib, writes the model
-description from its type, and zips both:
+The first builds the `cdylib`, whose `fmi3…` symbols come from
+`fmite::export!(Battery: CoSimulation + State)`. The second links the model as an rlib,
+writes the model description from its type, and zips both:
 
 ```text
 modelDescription.xml
@@ -119,5 +119,5 @@ binaries/aarch64-darwin/battery.dylib
 - `tests/battery.rs` drives the model through `fmite::Instance` and validates the
   description against the standard's XSD, vendored in `../../tests/schema`.
 - `tests/abi.rs` links `../../tests/abi.c`, which names all 75 functions of the
-  standard's headers by their header types, against the `cdylib`.
+  standard's headers with their header types, against the `cdylib`.
 - `tests/derive.rs` checks the derives against the hand-written impls.

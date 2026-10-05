@@ -1,4 +1,4 @@
-//! Packages the battery FMU from the `cdylib` Cargo built beside this program.
+//! Packages the battery FMU from the `cdylib` Cargo built next to this program.
 //!
 //! ```text
 //! cargo build -p battery && cargo run -p battery --bin package -- battery.fmu

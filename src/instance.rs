@@ -1,17 +1,19 @@
-//! `Instance<T>`: one instantiated FMU. It checks every call the importer makes against
-//! the standard's state machine and against `T::VARIABLES`, so that `T` sees only the
-//! calls the standard allows, with references it knows and values of the right type.
+//! `Instance<T>`: one instantiated FMU. It checks each importer call against the
+//! Co-Simulation state machine and `T::VARIABLES`. So `T` only sees calls the standard
+//! allows, with value references it knows and values of the right type.
 
-use crate::abi::{Logger, Status};
+use crate::abi::Status;
+use crate::co_simulation::Clock;
+use crate::log::{self, Logger};
 use crate::values::surplus;
 use crate::{
-    CoSimulation, Error, Fmu, Instantiation, LOG_CATEGORIES, State, Step, StepResult,
-    TICK_TOLERANCE, ValueReference, Values, ValuesMut, Variable, check,
+    CoSimulation, Error, Fmu, Instantiation, State, Step, StepResult, ValueReference, Values,
+    ValuesMut, Variable, check,
 };
 
-/// Where the instance is in the Co-Simulation state machine. Each variant holds what its
-/// mode can answer and nothing else: there is no time before initialization, and no
-/// clock before Step Mode.
+/// Where the instance is in the Co-Simulation state machine. Each variant holds only
+/// what its mode needs: there is no time before initialization and no clock before Step
+/// Mode.
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Mode {
     Instantiated,
@@ -22,7 +24,7 @@ enum Mode {
     Terminated {
         now: f64,
     },
-    /// A call panicked; the model may be half-updated, so only freeing is allowed.
+    /// A call panicked. The model may be half-updated, so only freeing is allowed.
     Fatal,
 }
 
@@ -38,52 +40,7 @@ impl Mode {
     }
 }
 
-/// Time in Step Mode. With a fixed step the instance counts ticks and computes `now`
-/// from them, so rounding does not accumulate over a long run.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Clock {
-    start: f64,
-    ticks: u64,
-    now: f64,
-}
-
-impl Clock {
-    fn starting(start: f64) -> Self {
-        Self {
-            start,
-            ticks: 0,
-            now: start,
-        }
-    }
-
-    /// Refuses a step that does not start where the last one ended.
-    fn check_start(&self, current: f64) -> Result<(), Error> {
-        if (current - self.now).abs() > TICK_TOLERANCE * self.now.abs().max(1.0) {
-            return Err(Error::new(format!(
-                "the step starts at {current}, but the instance is at {}",
-                self.now
-            )));
-        }
-        Ok(())
-    }
-
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "ticks are far below 2^53 in any run"
-    )]
-    fn advance(&mut self, step: Step, period: Option<f64>) -> Result<(), Error> {
-        match period {
-            Some(period) => {
-                self.ticks += step.ticks(period)?;
-                self.now = self.start + self.ticks as f64 * period;
-            }
-            None => self.now = step.end(),
-        }
-        Ok(())
-    }
-}
-
-/// A saved FMU state: the model and the instance's own state with it.
+/// A saved FMU state: the model plus the instance's mode.
 pub struct Saved<T> {
     model: T,
     mode: Mode,
@@ -102,7 +59,7 @@ impl<T: Fmu> Instance<T> {
     ///
     /// # Errors
     ///
-    /// When the token differs or `T::instantiate` refuses; the error is logged too.
+    /// If the token does not match or `T::instantiate` fails. The error is also logged.
     pub fn instantiate(token: &str, context: Instantiation, logger: Logger) -> Result<Self, Error> {
         const { check(T::VARIABLES) };
         let refuse = |error: Error| {
@@ -124,12 +81,12 @@ impl<T: Fmu> Instance<T> {
         })
     }
 
-    /// The model, for tests and for the description writer.
+    /// The model, for tests that drive the instance from Rust and check the result.
     pub fn model(&self) -> &T {
         &self.model
     }
 
-    /// Logs an error and answers `fmi3Error`, or answers `fmi3OK`.
+    /// Returns `fmi3OK`, or logs the error and returns `fmi3Error`.
     fn answer(&self, result: Result<(), Error>) -> Status {
         match result {
             Ok(()) => Status::Ok,
@@ -144,27 +101,23 @@ impl<T: Fmu> Instance<T> {
         Error::new(format!("{function} is not allowed in {}", self.mode.name()))
     }
 
-    /// Answers a function this FMU does not implement.
+    /// Fails a function this FMU does not implement, and logs why.
     pub fn refuse(&self, function: &str, why: &str) -> Status {
         self.answer(Err(Error::new(format!("{function}: {why}"))))
     }
 
-    /// Records a panic: logged as fatal, and the instance takes no more calls.
+    /// Records a panic. It is logged as fatal, and the instance accepts no more calls.
     pub fn poison(&mut self, function: &str, panic: &str) -> Status {
         self.mode = Mode::Fatal;
-        self.logger.log(
-            Status::Fatal,
-            "logStatusFatal",
-            &format!("{function} panicked: {panic}"),
-        );
+        self.logger.fatal(&format!("{function} panicked: {panic}"));
         Status::Fatal
     }
 
-    /// `fmi3SetDebugLogging`. fmite has no debug messages, so the call only checks
-    /// that every category is one the FMU declares.
+    /// `fmi3SetDebugLogging`. fmite has no debug messages, so this only checks that each
+    /// category is one the FMU declares.
     pub fn set_debug_logging(&mut self, categories: &[&str]) -> Status {
         let unknown = (categories.iter())
-            .find(|category| !LOG_CATEGORIES.iter().any(|(name, _)| name == *category));
+            .find(|category| !log::CATEGORIES.iter().any(|(name, _)| name == *category));
         match unknown {
             Some(category) => self.answer(Err(Error::new(format!(
                 "this FMU declares no log category {category}"
@@ -208,7 +161,7 @@ impl<T: Fmu> Instance<T> {
         self.answer(result)
     }
 
-    /// `fmi3Reset`: the model is instantiated again, from the same context.
+    /// `fmi3Reset`. Instantiates the model again from the same context.
     pub fn reset(&mut self) -> Status {
         let result = match self.mode {
             Mode::Fatal => Err(self.not_in("fmi3Reset")),
@@ -226,7 +179,7 @@ impl<T: Fmu> Instance<T> {
             .ok_or_else(|| ValueReference(vr).unknown())
     }
 
-    /// The current time, `time`'s value.
+    /// The current time: the value of `time`.
     fn now(&self) -> f64 {
         match self.mode {
             Mode::Initialization { start } => start,
@@ -236,7 +189,7 @@ impl<T: Fmu> Instance<T> {
         }
     }
 
-    /// `fmi3Get{Type}`: `out` holds the values of every reference, in order.
+    /// `fmi3Get{Type}`. Fills `out` with the values of each reference, in order.
     pub fn get(&mut self, vrs: &[u32], out: ValuesMut<'_>) -> Status {
         let result = self.try_get(vrs, out);
         self.answer(result)
@@ -263,7 +216,7 @@ impl<T: Fmu> Instance<T> {
         surplus(out.len())
     }
 
-    /// `fmi3Set{Type}`: `values` holds the values of every reference, in order.
+    /// `fmi3Set{Type}`. `values` holds the values for each reference, in order.
     pub fn set(&mut self, vrs: &[u32], values: Values<'_>) -> Status {
         let result = self.try_set(vrs, values);
         self.answer(result)
@@ -297,7 +250,7 @@ impl<T: Fmu> Instance<T> {
     ///
     /// # Errors
     ///
-    /// Outside the modes a state can be taken in.
+    /// In a mode where the state cannot be saved.
     pub fn save(&self) -> Result<Saved<T>, Status>
     where
         T: State,
@@ -328,7 +281,7 @@ impl<T: Fmu> Instance<T> {
 }
 
 impl<T: CoSimulation> Instance<T> {
-    /// `fmi3DoStep`. Returns whether the model asks to terminate, and the time reached.
+    /// `fmi3DoStep`. Returns the status, whether the model asks to stop, and the time.
     pub fn do_step(&mut self, current: f64, size: f64) -> (Status, bool, f64) {
         let Mode::Step(mut clock) = self.mode else {
             let status = self.answer(Err(self.not_in("fmi3DoStep")));
@@ -460,11 +413,11 @@ mod tests {
     #[test]
     fn settability_follows_the_table() {
         let mut instance = stepping();
-        // An output, a calculated parameter: never set by the importer.
+        // An output, a calculated parameter and `time`: the importer cannot set them.
         assert_eq!(instance.set(&[3], Values::Float64(&[1.0])), Status::Error);
         assert_eq!(instance.set(&[5], Values::UInt32(&[1])), Status::Error);
         assert_eq!(instance.set(&[0], Values::Float64(&[1.0])), Status::Error);
-        // An input and a tunable parameter: set in Step Mode.
+        // An input and a tunable parameter: settable in Step Mode.
         assert_eq!(
             instance.set(&[1, 2], Values::Float64(&[1.0, 2.0])),
             Status::Ok
@@ -497,7 +450,7 @@ mod tests {
     fn debug_logging_accepts_only_the_declared_categories() {
         let mut instance = stepping();
         assert_eq!(instance.set_debug_logging(&[]), Status::Ok);
-        assert_eq!(instance.set_debug_logging(&["logStatusError"]), Status::Ok);
+        assert_eq!(instance.set_debug_logging(&[log::ERROR]), Status::Ok);
         assert_eq!(instance.set_debug_logging(&["logEvents"]), Status::Error);
     }
 }

@@ -8,9 +8,8 @@ use super::{
 };
 use crate::Error;
 
-/// What a field type says about the variable it declares: its FMI type and shape, its
-/// row of Table 22, read as attribute text and as the answers the instance needs, and
-/// its unit.
+/// What a field type says about its variable: FMI type and shape, Table 22 row (as
+/// attribute text and as the answers the instance needs), and unit.
 pub trait Definition {
     const KIND: Kind;
     const DIMS: Dims;
@@ -18,8 +17,8 @@ pub trait Definition {
     const CAUSALITY: &'static str;
     const VARIABILITY: &'static str;
     const INITIAL: &'static str;
-    /// The row's default initial. The model description leaves `initial` out when it
-    /// is this, and for an input it must: the standard allows no `initial` there.
+    /// The row's default initial. The model description omits `initial` when it is
+    /// this. An input must omit it, since the standard allows no `initial` there.
     const DEFAULT_INITIAL: &'static str;
     const HAS_START: bool;
     const SETTABLE_IN_INITIALIZATION: bool;
@@ -48,8 +47,8 @@ where
     const UNIT: Option<&'static (&'static str, Unit)> = U::DECLARED;
 }
 
-/// One entry of `<ModelVariables>`. `causality`, `variability` and `initial` are the
-/// attribute text, for the model description only; the instance reads the answers.
+/// One entry of `<ModelVariables>`. `causality`, `variability` and `initial` are
+/// attribute text for the model description. The instance uses the answers instead.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Variable {
     pub name: &'static str,
@@ -88,8 +87,8 @@ impl Variable {
         }
     }
 
-    /// The number of values this variable takes from a call carrying `carried` values,
-    /// `left` of them still unread.
+    /// How many values this variable takes from a call carrying `carried` values, with
+    /// `left` still unread.
     ///
     /// # Errors
     ///
@@ -111,87 +110,6 @@ impl Variable {
         }
         Ok(count)
     }
-}
-
-/// Refuses, at compile time when called in `const`, a variable list the model
-/// description could not state: a value reference that is 0, which is `time`'s, or is
-/// used twice; a name used twice; two units of one name with different definitions;
-/// two enumerations of one name with different items.
-///
-/// # Panics
-///
-/// On the first of those it finds, naming it.
-pub const fn check(variables: &[Variable]) {
-    let mut i = 0;
-    while i < variables.len() {
-        let a = &variables[i];
-        assert!(a.value_reference != 0, "value reference 0 is `time`'s");
-        let mut j = i + 1;
-        while j < variables.len() {
-            let b = &variables[j];
-            assert!(
-                a.value_reference != b.value_reference,
-                "two variables share a value reference"
-            );
-            assert!(!same_str(a.name, b.name), "two variables share a name");
-            if let (Some(x), Some(y)) = (a.unit, b.unit) {
-                assert!(
-                    !same_str(x.0, y.0) || same_unit(&x.1, &y.1),
-                    "two units share a name and differ in definition"
-                );
-            }
-            if let (Some(x), Some(y)) = (a.enumeration, b.enumeration) {
-                assert!(
-                    !same_str(x.name, y.name) || same_items(x.items, y.items),
-                    "two enumerations share a name and differ in items"
-                );
-            }
-            j += 1;
-        }
-        i += 1;
-    }
-}
-
-const fn same_str(a: &str, b: &str) -> bool {
-    let (a, b) = (a.as_bytes(), b.as_bytes());
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i < a.len() {
-        if a[i] != b[i] {
-            return false;
-        }
-        i += 1;
-    }
-    true
-}
-
-const fn same_unit(a: &Unit, b: &Unit) -> bool {
-    a.kilogram == b.kilogram
-        && a.meter == b.meter
-        && a.second == b.second
-        && a.ampere == b.ampere
-        && a.kelvin == b.kelvin
-        && a.mole == b.mole
-        && a.candela == b.candela
-        && a.radian == b.radian
-        && a.factor.to_bits() == b.factor.to_bits()
-        && a.offset.to_bits() == b.offset.to_bits()
-}
-
-const fn same_items(a: &[(&str, i64)], b: &[(&str, i64)]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut i = 0;
-    while i < a.len() {
-        if !same_str(a[i].0, b[i].0) || a[i].1 != b[i].1 {
-            return false;
-        }
-        i += 1;
-    }
-    true
 }
 
 #[cfg(test)]
@@ -321,44 +239,6 @@ mod tests {
             (Kind::Float64, &[4][..])
         );
         assert_eq!(cells.enumeration, None);
-    }
-
-    #[test]
-    fn a_consistent_list_passes_the_check() {
-        const VARIABLES: &[Variable] = &[
-            Variable::new::<Input<f64, Celsius>>("a", 1),
-            Variable::new::<Output<f64, Celsius>>("b", 2),
-        ];
-        const { check(VARIABLES) };
-    }
-
-    #[test]
-    #[should_panic(expected = "two units share a name and differ in definition")]
-    fn two_units_of_one_name_are_refused() {
-        struct Fake;
-        impl crate::unit::UnitT for Fake {
-            const NAME: &'static str = "degC";
-            const UNIT: Unit = Unit::kelvin();
-        }
-        check(&[
-            Variable::new::<Input<f64, Celsius>>("a", 1),
-            Variable::new::<Output<f64, Fake>>("b", 2),
-        ]);
-    }
-
-    #[test]
-    #[should_panic(expected = "two variables share a value reference")]
-    fn a_shared_value_reference_is_refused() {
-        check(&[
-            Variable::new::<Input<f64>>("a", 1),
-            Variable::new::<Output<f64>>("b", 1),
-        ]);
-    }
-
-    #[test]
-    #[should_panic(expected = "value reference 0 is `time`'s")]
-    fn value_reference_zero_is_refused() {
-        check(&[Variable::new::<Input<f64>>("a", 0)]);
     }
 
     #[test]

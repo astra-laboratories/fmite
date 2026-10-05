@@ -1,5 +1,5 @@
-//! Enumerations: a Rust enum is an FMI `Enumeration`, and its items are the
-//! `<EnumerationType>` the model description declares.
+//! Enumerations. A Rust enum is an FMI `Enumeration`, and its items become the
+//! model description's `<EnumerationType>`.
 //!
 //! ```
 //! #[derive(Clone, Copy, Default)]
@@ -30,11 +30,11 @@
 //! let _: fmite::Output<Mode>;
 //! ```
 //!
-//! An enumeration is discrete and has no unit; the crate docs prove both.
+//! An enumeration is discrete and has no unit. The crate docs test both.
 
-/// A Rust enum that is an FMI enumeration. `ITEMS` names each item and its value, and
-/// `to_i64` and `from_i64` convert between the two. An importer that sends a value
-/// `from_i64` refuses gets `fmi3Error`, so the model only ever holds a valid item.
+/// A Rust enum that is an FMI enumeration. `ITEMS` lists each item's name and value.
+/// If the importer sends a value `from_i64` rejects, it gets `fmi3Error`, so the model
+/// only ever holds a valid item.
 pub trait Enumeration: Copy + 'static {
     const NAME: &'static str;
     const ITEMS: &'static [(&'static str, i64)];

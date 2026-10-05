@@ -1,10 +1,11 @@
 # fmite
 
-[FMI 3.0](https://fmi-standard.org/docs/3.0.1/) Co-Simulation export for Rust. A model
-is a struct whose field types say what each variable is; fmite writes the 75 `fmi3*`
-C functions, `modelDescription.xml` and the `.fmu` archive from it, and checks every
-importer call before the model sees it. The rules of the standard's variable table are
-trait bounds, so an ill-formed model does not compile.
+[FMI 3.0](https://fmi-standard.org/docs/3.0.1/) export for Rust. fmite aims at the whole
+standard: Co-Simulation, Model Exchange and Scheduled Execution. Co-Simulation is the
+part implemented today. A model is a struct whose field types say what each variable is;
+fmite writes the 75 `fmi3*` C functions, `modelDescription.xml` and the `.fmu` archive
+from it, and checks every importer call before the model sees it. The rules of the
+standard's variable table are trait bounds, so an ill-formed model does not compile.
 
 ```rust
 use fmite::unit::{Celsius, Watt};
@@ -54,7 +55,7 @@ Each is a `compile_fail` test in the walkthrough.
 
 - **No build script, no bindgen.** The ABI is transcribed from the 3.0.1 headers and a
   C test links every symbol against them.
-- **Unsafe only at the boundary**, in `abi` and `export!`; every pointer is checked
+- **Unsafe only at the boundary**, in `log` and `export!`; every pointer is checked
   before a slice is made from it. Your crate keeps `#![deny(unsafe_code)]`.
 - **No panic reaches the importer.** Every export runs in `catch_unwind`; a panic is
   `fmi3Fatal` and a log message. An unsupported function answers `fmi3Error` and logs
@@ -70,8 +71,8 @@ Each is a `compile_fail` test in the walkthrough.
 | Status          | What                                                                                                                                                                                                                                                                     |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **Implemented** | Co-Simulation: instantiate, initialization, `doStep` with a fixed internal step or a variable one, terminate, reset. All scalar types, `Boolean`, `Enumeration`, fixed-size arrays. FMU state get/set/free (`State`). The full `modelDescription.xml`: units, enumeration types, log categories, default experiment, model structure with explicit dependencies. Packaging. `#[derive(Variables, Enumeration)]`. |
-| **Planned**     | `String` and `Binary` variables. FMU state serialization. Finer `<ModelStructure>` dependencies. Event mode and early return. Clocks and Scheduled Execution. Annotations and `terminalsAndIcons`. Import.                                                               |
-| **Not planned** | Model Exchange. Directional and adjoint derivatives. FMI 2.0. Layered standards.                                                                                                                                                                                         |
+| **Planned**     | Model Exchange. Clocks and Scheduled Execution. `String` and `Binary` variables. FMU state serialization. Finer `<ModelStructure>` dependencies. Directional and adjoint derivatives. Event mode and early return. Annotations and `terminalsAndIcons`. Import. |
+| **Not planned** | FMI 2.0. Layered standards.                                                                                                                                                                                                                                              |
 
 A function in the planned or unplanned rows is still exported, and answers
 `fmi3Error` with a log message.

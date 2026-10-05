@@ -1,5 +1,6 @@
 //! The Rust types that are FMI types, and how their values cross a get or set.
 
+use super::Dims;
 use super::enumeration::{Enumeration, EnumerationType};
 use super::{Continuous, Discrete, Variability};
 use crate::sealed::{Sealed, Value};
@@ -42,8 +43,8 @@ impl Kind {
         }
     }
 
-    /// The type whose get and set functions carry the values: the type itself, except
-    /// that an enumeration travels as `Int64`.
+    /// The type whose get and set functions carry the values. This is the type itself,
+    /// except that an enumeration uses `Int64`.
     #[must_use]
     pub const fn carrier(self) -> &'static str {
         match self {
@@ -53,61 +54,12 @@ impl Kind {
     }
 }
 
-/// The fixed `<Dimension>`s of a variable, outermost first: `[[f32; 3]; 2]` is `[2, 3]`,
-/// and a scalar has none. Built in `const`; a ninth rank fails to compile.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Dims {
-    len: u8,
-    sizes: [usize; 8],
-}
-
-impl Dims {
-    pub const SCALAR: Self = Self {
-        len: 0,
-        sizes: [0; 8],
-    };
-
-    /// These dimensions with one more, `n`, outside them.
-    #[must_use]
-    pub const fn outer(self, n: usize) -> Self {
-        let mut sizes = [0; 8];
-        sizes[0] = n;
-        let mut i = 0;
-        while i < self.len as usize {
-            sizes[i + 1] = self.sizes[i];
-            i += 1;
-        }
-        Self {
-            len: self.len + 1,
-            sizes,
-        }
-    }
-
-    #[must_use]
-    pub fn as_slice(&self) -> &[usize] {
-        &self.sizes[..usize::from(self.len)]
-    }
-
-    /// The number of scalar values, one for a scalar.
-    #[must_use]
-    pub const fn count(&self) -> usize {
-        let mut count = 1;
-        let mut i = 0;
-        while i < self.len as usize {
-            count *= self.sizes[i];
-            i += 1;
-        }
-        count
-    }
-}
-
 /// A Rust type that is an FMI type. `DefaultVariability` is the standard's default for
-/// it. Implemented by fmite for the scalars and arrays of them, and for every
-/// [`Enumeration`].
+/// it. fmite implements it for the scalars, arrays of them, and every [`Enumeration`].
 ///
-/// `read` and `write` move a value through a get or set buffer, scalars in row-major
-/// order starting at `at`. They are for the instance and the `Variables` helpers on
-/// `Field`; model code has no use for them.
+/// `read` and `write` copy a value to or from a get or set buffer, as scalars in
+/// row-major order starting at `at`. The instance and `Field`'s `Variables` helpers use
+/// them. Model code does not need them.
 pub trait FmiType: Value + Copy {
     type DefaultVariability: Variability;
     const KIND: Kind;

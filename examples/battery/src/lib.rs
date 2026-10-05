@@ -3,8 +3,8 @@
 //! Every field shows one rule fmite puts in a type:
 //!
 //! - an input is read-only, so `*self.current = …` does not compile;
-//! - a unit is a type: shipped ones (`Ampere`, `Celsius`, `AmpereHour`), and three of
-//!   this crate's own, `MilliOhm`, `Percent` and `KelvinPerSecond`, each one impl;
+//! - a unit is a type: shipped ones (`Ampere`, `Celsius`, `AmpereHour`) and three
+//!   defined here (`MilliOhm`, `Percent`, `KelvinPerSecond`), one impl each;
 //! - a calculated parameter is computed from the parameters in `exit_initialization`;
 //! - a start value is `Default`, once;
 //! - an array output gets its `<Dimension>` from its length;
@@ -12,7 +12,7 @@
 //! - a plain field is private state, invisible to the importer.
 //!
 //! `#[derive(Variables)]` numbers the variables in field order and writes the value
-//! reference table; `tests/derive.rs` holds the hand-written impl it replaces.
+//! reference lookup. `tests/derive.rs` holds the hand-written impl it replaces.
 
 use fmite::unit::{Ampere, AmpereHour, Celsius, Unit, UnitT, Volt, WattHour};
 use fmite::{
@@ -55,30 +55,30 @@ pub enum Mode {
 
 /// Cells in series.
 pub const CELLS: usize = 4;
-/// Each cell's resistance relative to the pack parameter: no two cells are alike.
+/// Each cell's resistance as a multiple of the pack's, so the cells differ.
 const SPREAD: [f64; CELLS] = [1.0, 1.05, 0.95, 1.1];
-/// Open-circuit voltage of an empty cell, and its rise to full.
+/// Open-circuit voltage of an empty cell, and how much it rises when full.
 const EMPTY_VOLTS: f64 = 3.0;
 const SPAN_VOLTS: f64 = 1.2;
-/// The nominal cell voltages the rated energy is computed at.
+/// Nominal cell voltages, used to compute the rated energy.
 const NOMINAL_VOLTS: [f64; CELLS] = [3.6; CELLS];
 /// The pack's heat capacity, J/K, and its cooling time constant, s.
 const HEAT_CAPACITY: f64 = 2000.0;
 const COOLING: f64 = 600.0;
-/// Below this, in amperes, the pack is idle.
+/// Below this current, in amperes, the pack is idle.
 const IDLE_CURRENT: f64 = 0.1;
-/// The model's own step, s.
+/// The model's internal step, s.
 const DT: f64 = 0.1;
 
 #[derive(Clone, Variables)]
 pub struct Battery {
-    /// Positive discharges.
+    /// Positive means discharging.
     pub current: Input<f64, Ampere>,
     pub ambient: Input<f64, Celsius>,
     pub capacity: Parameter<f64, AmpereHour>,
     pub resistance: Parameter<f64, MilliOhm, Tunable>,
     pub energy: CalculatedParameter<f64, WattHour>,
-    /// Exact, so its start value is the importer's to choose.
+    /// Exact, so the importer may choose its start value.
     pub soc: Output<f64, Percent, Discrete, Exact>,
     pub cells: Output<[f64; CELLS], Volt>,
     pub temperature: Output<f64, Celsius, Discrete>,
@@ -130,8 +130,8 @@ impl Fmu for Battery {
 }
 
 impl Battery {
-    /// The outputs at the present charge and current, with the pack heating at
-    /// `heat` watts.
+    /// Updates the outputs for the present charge and current, with the pack heating
+    /// at `heat` watts.
     fn update(&mut self, heat: f64) {
         let fill = self.charge / *self.capacity;
         let ohms = *self.resistance * MilliOhm::UNIT.factor;
