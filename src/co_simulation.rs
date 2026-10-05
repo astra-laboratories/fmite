@@ -1,4 +1,5 @@
-//! Co-Simulation: the interface, and the communication step it advances by.
+//! Co-Simulation: the interface, the communication step it advances by, and the clock
+//! the instance keeps time with.
 
 use crate::{Error, Fmu};
 
@@ -70,6 +71,61 @@ pub enum StepResult {
     Complete,
     /// The step reached its end, and the model asks the importer to stop.
     Terminate,
+}
+
+/// Time in Step Mode. With a fixed step the instance counts ticks and computes `now`
+/// from them, so rounding does not accumulate over a long run.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Clock {
+    start: f64,
+    ticks: u64,
+    pub now: f64,
+}
+
+impl Clock {
+    #[must_use]
+    pub fn starting(start: f64) -> Self {
+        Self {
+            start,
+            ticks: 0,
+            now: start,
+        }
+    }
+
+    /// Refuses a step that does not start where the last one ended.
+    ///
+    /// # Errors
+    ///
+    /// When `current` is more than [`TICK_TOLERANCE`] off the time reached.
+    pub fn check_start(&self, current: f64) -> Result<(), Error> {
+        if (current - self.now).abs() > TICK_TOLERANCE * self.now.abs().max(1.0) {
+            return Err(Error::new(format!(
+                "the step starts at {current}, but the instance is at {}",
+                self.now
+            )));
+        }
+        Ok(())
+    }
+
+    /// Moves to the step's end: by whole ticks with a fixed `period`, else to `step.end()`.
+    ///
+    /// # Errors
+    ///
+    /// When the step is not a whole number of `period`s.
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "ticks are far below 2^53 in any run"
+    )]
+    pub fn advance(&mut self, step: Step, period: Option<f64>) -> Result<(), Error> {
+        match period {
+            Some(period) => {
+                self.ticks += step.ticks(period)?;
+                self.now = self.start + self.ticks as f64 * period;
+            }
+            None => self.now = step.end(),
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

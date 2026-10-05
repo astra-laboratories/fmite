@@ -20,7 +20,7 @@ mod test_model;
 mod values;
 mod variables;
 
-pub use co_simulation::*;
+pub use co_simulation::{CoSimulation, Step, StepResult, TICK_TOLERANCE};
 pub use error::Error;
 #[cfg(feature = "derive")]
 pub use fmite_derive::{Enumeration, Variables};

@@ -3,10 +3,11 @@
 //! calls the standard allows, with references it knows and values of the right type.
 
 use crate::abi::{Logger, Status};
+use crate::co_simulation::Clock;
 use crate::values::surplus;
 use crate::{
     CoSimulation, Error, Fmu, Instantiation, LOG_CATEGORIES, State, Step, StepResult,
-    TICK_TOLERANCE, ValueReference, Values, ValuesMut, Variable, check,
+    ValueReference, Values, ValuesMut, Variable, check,
 };
 
 /// Where the instance is in the Co-Simulation state machine. Each variant holds what its
@@ -35,51 +36,6 @@ impl Mode {
             Self::Terminated { .. } => "Terminated",
             Self::Fatal => "an error state",
         }
-    }
-}
-
-/// Time in Step Mode. With a fixed step the instance counts ticks and computes `now`
-/// from them, so rounding does not accumulate over a long run.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct Clock {
-    start: f64,
-    ticks: u64,
-    now: f64,
-}
-
-impl Clock {
-    fn starting(start: f64) -> Self {
-        Self {
-            start,
-            ticks: 0,
-            now: start,
-        }
-    }
-
-    /// Refuses a step that does not start where the last one ended.
-    fn check_start(&self, current: f64) -> Result<(), Error> {
-        if (current - self.now).abs() > TICK_TOLERANCE * self.now.abs().max(1.0) {
-            return Err(Error::new(format!(
-                "the step starts at {current}, but the instance is at {}",
-                self.now
-            )));
-        }
-        Ok(())
-    }
-
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "ticks are far below 2^53 in any run"
-    )]
-    fn advance(&mut self, step: Step, period: Option<f64>) -> Result<(), Error> {
-        match period {
-            Some(period) => {
-                self.ticks += step.ticks(period)?;
-                self.now = self.start + self.ticks as f64 * period;
-            }
-            None => self.now = step.end(),
-        }
-        Ok(())
     }
 }
 
