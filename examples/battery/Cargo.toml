@@ -10,4 +10,4 @@ license = "MIT OR Apache-2.0"
 crate-type = ["cdylib", "rlib"]
 
 [dependencies]
-fmite = { path = "../..", features = ["derive", "package"] }
+fmite = { path = "../..", features = ["package"] }

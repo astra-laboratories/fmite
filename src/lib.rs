@@ -1,4 +1,5 @@
-#![doc = include_str!("../docs/walkthrough.md")]
+// The walkthrough's examples derive, so it is the crate documentation with `derive` on.
+#![cfg_attr(feature = "derive", doc = include_str!("../docs/walkthrough.md"))]
 #![deny(unsafe_code)]
 #![deny(clippy::all)]
 #![deny(clippy::dbg_macro)]

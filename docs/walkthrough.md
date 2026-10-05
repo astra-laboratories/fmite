@@ -23,40 +23,17 @@ One field per variable, typed by its role. A field without a wrapper is private 
 
 ```
 use fmite::unit::{Celsius, Kelvin, Watt};
-use fmite::{
-    CalculatedParameter, CoSimulation, Enumeration, Error, Fmu, Input, Output, Parameter, Step,
-    StepResult, Tunable, ValueReference, Values, ValuesMut, Variable, Variables,
-};
+use fmite::{CalculatedParameter, Enumeration, Input, Output, Parameter, Tunable, Variables};
 
-/// An FMI `Enumeration`: a Rust enum and the value of each item.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// An FMI `Enumeration`: a Rust enum, its items valued by their discriminants.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Enumeration)]
 pub enum Mode {
     #[default]
-    Off,
-    Heating,
+    Off = 1,
+    Heating = 2,
 }
 
-impl Enumeration for Mode {
-    const NAME: &'static str = "Mode";
-    const ITEMS: &'static [(&'static str, i64)] = &[("Off", 1), ("Heating", 2)];
-
-    fn to_i64(self) -> i64 {
-        match self {
-            Self::Off => 1,
-            Self::Heating => 2,
-        }
-    }
-
-    fn from_i64(value: i64) -> Option<Self> {
-        match value {
-            1 => Some(Self::Off),
-            2 => Some(Self::Heating),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Clone)]
+#[derive(Clone, Variables)]
 pub struct Heater {
     pub setpoint: Input<f64, Celsius>,
     pub temperature: Input<f64, Celsius>,
@@ -107,80 +84,69 @@ from [`unit`](mod@unit), or one of your own: a [`unit::UnitT`] impl naming a `co
 `Default`, and there is no second place to write it. `Clone` is the FMU state
 capability: `fmi3GetFMUState` is a clone.
 
-### `Variables`: the value-reference table
+### What the derives write
 
-The list the model description declares, and `get` and `set` by value reference.
-`Variable::new::<FieldType>` reads the field's row of Table 22, so an illegal type
-fails here exactly as it fails on the field. The instance looks every reference up
-before calling, so `set` lists only what the importer may set.
+`#[derive(Variables)]` numbers the variables in field order from 1 (`time` is 0), takes
+`MODEL_NAME` from the package name, and hashes the declarations into an
+`INSTANTIATION_TOKEN`, so the token changes exactly when they do. `#[derive(Enumeration)]`
+makes each variant an item, valued by its discriminant: an integer literal, or, as in
+Rust, one more than the variant before, and 0 for the first.
+
+Both write the impl below, through the public API, so a model may write it by hand
+instead. `Variable::new::<FieldType>` reads the field's row of Table 22, so an illegal
+type fails here exactly as it fails on the field. The instance looks every reference up
+before calling, so `set` never sees an output or a calculated parameter, and may name
+them.
 
 ```
 # use fmite::unit::{Celsius, Kelvin, Watt};
 # use fmite::{
-#     CalculatedParameter, CoSimulation, Enumeration, Error, Fmu, Input, Output, Parameter, Step,
-#     StepResult, Tunable, ValueReference, Values, ValuesMut, Variable, Variables,
+#     CalculatedParameter, Enumeration, Error, Input, Output, Parameter, Tunable,
+#     ValueReference, Values, ValuesMut, Variable, Variables,
 # };
 #
-# /// An FMI `Enumeration`: a Rust enum and the value of each item.
 # #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 # pub enum Mode {
 #     #[default]
-#     Off,
-#     Heating,
-# }
-#
-# impl Enumeration for Mode {
-#     const NAME: &'static str = "Mode";
-#     const ITEMS: &'static [(&'static str, i64)] = &[("Off", 1), ("Heating", 2)];
-#
-#     fn to_i64(self) -> i64 {
-#         match self {
-#             Self::Off => 1,
-#             Self::Heating => 2,
-#         }
-#     }
-#
-#     fn from_i64(value: i64) -> Option<Self> {
-#         match value {
-#             1 => Some(Self::Off),
-#             2 => Some(Self::Heating),
-#             _ => None,
-#         }
-#     }
+#     Off = 1,
+#     Heating = 2,
 # }
 #
 # #[derive(Clone)]
 # pub struct Heater {
 #     pub setpoint: Input<f64, Celsius>,
 #     pub temperature: Input<f64, Celsius>,
-#     /// Watts per kelvin of error.
 #     pub gain: Parameter<f64, (), Tunable>,
 #     pub limit: Parameter<f64, Watt>,
-#     /// The error at which the heater saturates: `limit / gain`.
 #     pub saturation: CalculatedParameter<f64, Kelvin>,
 #     pub power: Output<f64, Watt>,
 #     pub mode: Output<Mode>,
-#     /// A plain field is private state. The importer never sees it.
 #     elapsed: f64,
 # }
 #
-# impl Default for Heater {
-#     fn default() -> Self {
-#         Self {
-#             setpoint: Input::new(20.0),
-#             temperature: Input::new(20.0),
-#             gain: Parameter::new(100.0),
-#             limit: Parameter::new(2000.0),
-#             saturation: CalculatedParameter::default(),
-#             power: Output::default(),
-#             mode: Output::default(),
-#             elapsed: 0.0,
-#         }
-#     }
-# }
+impl Enumeration for Mode {
+    const NAME: &'static str = "Mode";
+    const ITEMS: &'static [(&'static str, i64)] = &[("Off", 1), ("Heating", 2)];
+
+    fn to_i64(self) -> i64 {
+        match self {
+            Self::Off => 1,
+            Self::Heating => 2,
+        }
+    }
+
+    fn from_i64(value: i64) -> Option<Self> {
+        match value {
+            1 => Some(Self::Off),
+            2 => Some(Self::Heating),
+            _ => None,
+        }
+    }
+}
+
 impl Variables for Heater {
-    const MODEL_NAME: &'static str = "heater";
-    const INSTANTIATION_TOKEN: &'static str = "{heater-1}";
+    const MODEL_NAME: &'static str = env!("CARGO_PKG_NAME");
+    const INSTANTIATION_TOKEN: &'static str = "{1f4a7687-20dd-7a82-37dc-878688a85983}";
     const VARIABLES: &'static [Variable] = &[
         Variable::new::<Input<f64, Celsius>>("setpoint", 1),
         Variable::new::<Input<f64, Celsius>>("temperature", 2),
@@ -210,15 +176,14 @@ impl Variables for Heater {
             2 => self.temperature.importer_set(values),
             3 => self.gain.importer_set(values),
             4 => self.limit.importer_set(values),
+            5 => self.saturation.importer_set(values),
+            6 => self.power.importer_set(values),
+            7 => self.mode.importer_set(values),
             _ => Err(vr.unknown()),
         }
     }
 }
 ```
-
-With the `derive` feature, `#[derive(fmite::Variables)]` writes this impl from the
-struct: variables numbered in field order from 1 (`time` is 0), `MODEL_NAME` from the
-package name, and an `INSTANTIATION_TOKEN` hashed from the declarations.
 
 ### `Fmu` and `CoSimulation`: the hooks
 
@@ -233,35 +198,15 @@ computed again in `do_step`, where a tunable parameter may have changed.
 #     StepResult, Tunable, ValueReference, Values, ValuesMut, Variable, Variables,
 # };
 #
-# /// An FMI `Enumeration`: a Rust enum and the value of each item.
-# #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+# /// An FMI `Enumeration`: a Rust enum, its items valued by their discriminants.
+# #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Enumeration)]
 # pub enum Mode {
 #     #[default]
-#     Off,
-#     Heating,
+#     Off = 1,
+#     Heating = 2,
 # }
 #
-# impl Enumeration for Mode {
-#     const NAME: &'static str = "Mode";
-#     const ITEMS: &'static [(&'static str, i64)] = &[("Off", 1), ("Heating", 2)];
-#
-#     fn to_i64(self) -> i64 {
-#         match self {
-#             Self::Off => 1,
-#             Self::Heating => 2,
-#         }
-#     }
-#
-#     fn from_i64(value: i64) -> Option<Self> {
-#         match value {
-#             1 => Some(Self::Off),
-#             2 => Some(Self::Heating),
-#             _ => None,
-#         }
-#     }
-# }
-#
-# #[derive(Clone)]
+# #[derive(Clone, Variables)]
 # pub struct Heater {
 #     pub setpoint: Input<f64, Celsius>,
 #     pub temperature: Input<f64, Celsius>,
@@ -287,42 +232,6 @@ computed again in `do_step`, where a tunable parameter may have changed.
 #             power: Output::default(),
 #             mode: Output::default(),
 #             elapsed: 0.0,
-#         }
-#     }
-# }
-# impl Variables for Heater {
-#     const MODEL_NAME: &'static str = "heater";
-#     const INSTANTIATION_TOKEN: &'static str = "{heater-1}";
-#     const VARIABLES: &'static [Variable] = &[
-#         Variable::new::<Input<f64, Celsius>>("setpoint", 1),
-#         Variable::new::<Input<f64, Celsius>>("temperature", 2),
-#         Variable::new::<Parameter<f64, (), Tunable>>("gain", 3),
-#         Variable::new::<Parameter<f64, Watt>>("limit", 4),
-#         Variable::new::<CalculatedParameter<f64, Kelvin>>("saturation", 5),
-#         Variable::new::<Output<f64, Watt>>("power", 6),
-#         Variable::new::<Output<Mode>>("mode", 7),
-#     ];
-#
-#     fn get(&self, vr: ValueReference, out: ValuesMut<'_>) -> Result<(), Error> {
-#         match vr.0 {
-#             1 => self.setpoint.get_into(out),
-#             2 => self.temperature.get_into(out),
-#             3 => self.gain.get_into(out),
-#             4 => self.limit.get_into(out),
-#             5 => self.saturation.get_into(out),
-#             6 => self.power.get_into(out),
-#             7 => self.mode.get_into(out),
-#             _ => Err(vr.unknown()),
-#         }
-#     }
-#
-#     fn set(&mut self, vr: ValueReference, values: Values<'_>) -> Result<(), Error> {
-#         match vr.0 {
-#             1 => self.setpoint.importer_set(values),
-#             2 => self.temperature.importer_set(values),
-#             3 => self.gain.importer_set(values),
-#             4 => self.limit.importer_set(values),
-#             _ => Err(vr.unknown()),
 #         }
 #     }
 # }
@@ -365,35 +274,15 @@ Once, in the crate that builds the `cdylib`:
 #     StepResult, Tunable, ValueReference, Values, ValuesMut, Variable, Variables,
 # };
 #
-# /// An FMI `Enumeration`: a Rust enum and the value of each item.
-# #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+# /// An FMI `Enumeration`: a Rust enum, its items valued by their discriminants.
+# #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Enumeration)]
 # pub enum Mode {
 #     #[default]
-#     Off,
-#     Heating,
+#     Off = 1,
+#     Heating = 2,
 # }
 #
-# impl Enumeration for Mode {
-#     const NAME: &'static str = "Mode";
-#     const ITEMS: &'static [(&'static str, i64)] = &[("Off", 1), ("Heating", 2)];
-#
-#     fn to_i64(self) -> i64 {
-#         match self {
-#             Self::Off => 1,
-#             Self::Heating => 2,
-#         }
-#     }
-#
-#     fn from_i64(value: i64) -> Option<Self> {
-#         match value {
-#             1 => Some(Self::Off),
-#             2 => Some(Self::Heating),
-#             _ => None,
-#         }
-#     }
-# }
-#
-# #[derive(Clone)]
+# #[derive(Clone, Variables)]
 # pub struct Heater {
 #     pub setpoint: Input<f64, Celsius>,
 #     pub temperature: Input<f64, Celsius>,
@@ -419,43 +308,6 @@ Once, in the crate that builds the `cdylib`:
 #             power: Output::default(),
 #             mode: Output::default(),
 #             elapsed: 0.0,
-#         }
-#     }
-# }
-#
-# impl Variables for Heater {
-#     const MODEL_NAME: &'static str = "heater";
-#     const INSTANTIATION_TOKEN: &'static str = "{heater-1}";
-#     const VARIABLES: &'static [Variable] = &[
-#         Variable::new::<Input<f64, Celsius>>("setpoint", 1),
-#         Variable::new::<Input<f64, Celsius>>("temperature", 2),
-#         Variable::new::<Parameter<f64, (), Tunable>>("gain", 3),
-#         Variable::new::<Parameter<f64, Watt>>("limit", 4),
-#         Variable::new::<CalculatedParameter<f64, Kelvin>>("saturation", 5),
-#         Variable::new::<Output<f64, Watt>>("power", 6),
-#         Variable::new::<Output<Mode>>("mode", 7),
-#     ];
-#
-#     fn get(&self, vr: ValueReference, out: ValuesMut<'_>) -> Result<(), Error> {
-#         match vr.0 {
-#             1 => self.setpoint.get_into(out),
-#             2 => self.temperature.get_into(out),
-#             3 => self.gain.get_into(out),
-#             4 => self.limit.get_into(out),
-#             5 => self.saturation.get_into(out),
-#             6 => self.power.get_into(out),
-#             7 => self.mode.get_into(out),
-#             _ => Err(vr.unknown()),
-#         }
-#     }
-#
-#     fn set(&mut self, vr: ValueReference, values: Values<'_>) -> Result<(), Error> {
-#         match vr.0 {
-#             1 => self.setpoint.importer_set(values),
-#             2 => self.temperature.importer_set(values),
-#             3 => self.gain.importer_set(values),
-#             4 => self.limit.importer_set(values),
-#             _ => Err(vr.unknown()),
 #         }
 #     }
 # }
@@ -499,35 +351,15 @@ With the `package` feature, on the host, after `cargo build`:
 #     StepResult, Tunable, ValueReference, Values, ValuesMut, Variable, Variables,
 # };
 #
-# /// An FMI `Enumeration`: a Rust enum and the value of each item.
-# #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+# /// An FMI `Enumeration`: a Rust enum, its items valued by their discriminants.
+# #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Enumeration)]
 # pub enum Mode {
 #     #[default]
-#     Off,
-#     Heating,
+#     Off = 1,
+#     Heating = 2,
 # }
 #
-# impl Enumeration for Mode {
-#     const NAME: &'static str = "Mode";
-#     const ITEMS: &'static [(&'static str, i64)] = &[("Off", 1), ("Heating", 2)];
-#
-#     fn to_i64(self) -> i64 {
-#         match self {
-#             Self::Off => 1,
-#             Self::Heating => 2,
-#         }
-#     }
-#
-#     fn from_i64(value: i64) -> Option<Self> {
-#         match value {
-#             1 => Some(Self::Off),
-#             2 => Some(Self::Heating),
-#             _ => None,
-#         }
-#     }
-# }
-#
-# #[derive(Clone)]
+# #[derive(Clone, Variables)]
 # pub struct Heater {
 #     pub setpoint: Input<f64, Celsius>,
 #     pub temperature: Input<f64, Celsius>,
@@ -553,43 +385,6 @@ With the `package` feature, on the host, after `cargo build`:
 #             power: Output::default(),
 #             mode: Output::default(),
 #             elapsed: 0.0,
-#         }
-#     }
-# }
-#
-# impl Variables for Heater {
-#     const MODEL_NAME: &'static str = "heater";
-#     const INSTANTIATION_TOKEN: &'static str = "{heater-1}";
-#     const VARIABLES: &'static [Variable] = &[
-#         Variable::new::<Input<f64, Celsius>>("setpoint", 1),
-#         Variable::new::<Input<f64, Celsius>>("temperature", 2),
-#         Variable::new::<Parameter<f64, (), Tunable>>("gain", 3),
-#         Variable::new::<Parameter<f64, Watt>>("limit", 4),
-#         Variable::new::<CalculatedParameter<f64, Kelvin>>("saturation", 5),
-#         Variable::new::<Output<f64, Watt>>("power", 6),
-#         Variable::new::<Output<Mode>>("mode", 7),
-#     ];
-#
-#     fn get(&self, vr: ValueReference, out: ValuesMut<'_>) -> Result<(), Error> {
-#         match vr.0 {
-#             1 => self.setpoint.get_into(out),
-#             2 => self.temperature.get_into(out),
-#             3 => self.gain.get_into(out),
-#             4 => self.limit.get_into(out),
-#             5 => self.saturation.get_into(out),
-#             6 => self.power.get_into(out),
-#             7 => self.mode.get_into(out),
-#             _ => Err(vr.unknown()),
-#         }
-#     }
-#
-#     fn set(&mut self, vr: ValueReference, values: Values<'_>) -> Result<(), Error> {
-#         match vr.0 {
-#             1 => self.setpoint.importer_set(values),
-#             2 => self.temperature.importer_set(values),
-#             3 => self.gain.importer_set(values),
-#             4 => self.limit.importer_set(values),
-#             _ => Err(vr.unknown()),
 #         }
 #     }
 # }
@@ -656,7 +451,9 @@ the model description's capability flags gets an error with a message, not a cra
 
 ### The model description
 
-Nothing in it is written by hand. This is the heater's, checked by this page's tests:
+Nothing in it is written by hand. This is the heater's, checked by this page's tests.
+The examples here are doctests of the `fmite` package, so the derived model name is
+`fmite`; in a crate of its own named `heater`, it is `heater`.
 
 ```
 # use fmite::unit::{Celsius, Kelvin, Watt};
@@ -665,35 +462,15 @@ Nothing in it is written by hand. This is the heater's, checked by this page's t
 #     StepResult, Tunable, ValueReference, Values, ValuesMut, Variable, Variables,
 # };
 #
-# /// An FMI `Enumeration`: a Rust enum and the value of each item.
-# #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+# /// An FMI `Enumeration`: a Rust enum, its items valued by their discriminants.
+# #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Enumeration)]
 # pub enum Mode {
 #     #[default]
-#     Off,
-#     Heating,
+#     Off = 1,
+#     Heating = 2,
 # }
 #
-# impl Enumeration for Mode {
-#     const NAME: &'static str = "Mode";
-#     const ITEMS: &'static [(&'static str, i64)] = &[("Off", 1), ("Heating", 2)];
-#
-#     fn to_i64(self) -> i64 {
-#         match self {
-#             Self::Off => 1,
-#             Self::Heating => 2,
-#         }
-#     }
-#
-#     fn from_i64(value: i64) -> Option<Self> {
-#         match value {
-#             1 => Some(Self::Off),
-#             2 => Some(Self::Heating),
-#             _ => None,
-#         }
-#     }
-# }
-#
-# #[derive(Clone)]
+# #[derive(Clone, Variables)]
 # pub struct Heater {
 #     pub setpoint: Input<f64, Celsius>,
 #     pub temperature: Input<f64, Celsius>,
@@ -723,43 +500,6 @@ Nothing in it is written by hand. This is the heater's, checked by this page's t
 #     }
 # }
 #
-# impl Variables for Heater {
-#     const MODEL_NAME: &'static str = "heater";
-#     const INSTANTIATION_TOKEN: &'static str = "{heater-1}";
-#     const VARIABLES: &'static [Variable] = &[
-#         Variable::new::<Input<f64, Celsius>>("setpoint", 1),
-#         Variable::new::<Input<f64, Celsius>>("temperature", 2),
-#         Variable::new::<Parameter<f64, (), Tunable>>("gain", 3),
-#         Variable::new::<Parameter<f64, Watt>>("limit", 4),
-#         Variable::new::<CalculatedParameter<f64, Kelvin>>("saturation", 5),
-#         Variable::new::<Output<f64, Watt>>("power", 6),
-#         Variable::new::<Output<Mode>>("mode", 7),
-#     ];
-#
-#     fn get(&self, vr: ValueReference, out: ValuesMut<'_>) -> Result<(), Error> {
-#         match vr.0 {
-#             1 => self.setpoint.get_into(out),
-#             2 => self.temperature.get_into(out),
-#             3 => self.gain.get_into(out),
-#             4 => self.limit.get_into(out),
-#             5 => self.saturation.get_into(out),
-#             6 => self.power.get_into(out),
-#             7 => self.mode.get_into(out),
-#             _ => Err(vr.unknown()),
-#         }
-#     }
-#
-#     fn set(&mut self, vr: ValueReference, values: Values<'_>) -> Result<(), Error> {
-#         match vr.0 {
-#             1 => self.setpoint.importer_set(values),
-#             2 => self.temperature.importer_set(values),
-#             3 => self.gain.importer_set(values),
-#             4 => self.limit.importer_set(values),
-#             _ => Err(vr.unknown()),
-#         }
-#     }
-# }
-#
 # impl Fmu for Heater {
 #     const DESCRIPTION: Option<&'static str> = Some("A proportional heater");
 #
@@ -785,8 +525,8 @@ Nothing in it is written by hand. This is the heater's, checked by this page's t
 # let xml = fmite::description::model_description::<Heater>().unwrap();
 # assert_eq!(format!("\n{xml}"), concat!(r#"
 <?xml version="1.0" encoding="UTF-8"?>
-<fmiModelDescription fmiVersion="3.0" modelName="heater" instantiationToken="{heater-1}" description="A proportional heater" generationTool="fmite 0.1.0" variableNamingConvention="structured">
-  <CoSimulation modelIdentifier="heater" canGetAndSetFMUState="true" canHandleVariableCommunicationStepSize="true"/>
+<fmiModelDescription fmiVersion="3.0" modelName="fmite" instantiationToken="{1f4a7687-20dd-7a82-37dc-878688a85983}" description="A proportional heater" generationTool="fmite 0.1.0" variableNamingConvention="structured">
+  <CoSimulation modelIdentifier="fmite" canGetAndSetFMUState="true" canHandleVariableCommunicationStepSize="true"/>
   <UnitDefinitions>
     <Unit name="degC">
       <BaseUnit K="1" offset="273.15"/>
@@ -952,34 +692,15 @@ not `Clone` cannot claim it, so `canGetAndSetFMUState="true"` is never a lie.
 #     StepResult, Tunable, ValueReference, Values, ValuesMut, Variable, Variables,
 # };
 #
-# /// An FMI `Enumeration`: a Rust enum and the value of each item.
-# #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+# /// An FMI `Enumeration`: a Rust enum, its items valued by their discriminants.
+# #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Enumeration)]
 # pub enum Mode {
 #     #[default]
-#     Off,
-#     Heating,
+#     Off = 1,
+#     Heating = 2,
 # }
 #
-# impl Enumeration for Mode {
-#     const NAME: &'static str = "Mode";
-#     const ITEMS: &'static [(&'static str, i64)] = &[("Off", 1), ("Heating", 2)];
-#
-#     fn to_i64(self) -> i64 {
-#         match self {
-#             Self::Off => 1,
-#             Self::Heating => 2,
-#         }
-#     }
-#
-#     fn from_i64(value: i64) -> Option<Self> {
-#         match value {
-#             1 => Some(Self::Off),
-#             2 => Some(Self::Heating),
-#             _ => None,
-#         }
-#     }
-# }
-#
+# #[derive(Variables)]
 # pub struct Heater {
 #     pub setpoint: Input<f64, Celsius>,
 #     pub temperature: Input<f64, Celsius>,
@@ -1005,43 +726,6 @@ not `Clone` cannot claim it, so `canGetAndSetFMUState="true"` is never a lie.
 #             power: Output::default(),
 #             mode: Output::default(),
 #             elapsed: 0.0,
-#         }
-#     }
-# }
-#
-# impl Variables for Heater {
-#     const MODEL_NAME: &'static str = "heater";
-#     const INSTANTIATION_TOKEN: &'static str = "{heater-1}";
-#     const VARIABLES: &'static [Variable] = &[
-#         Variable::new::<Input<f64, Celsius>>("setpoint", 1),
-#         Variable::new::<Input<f64, Celsius>>("temperature", 2),
-#         Variable::new::<Parameter<f64, (), Tunable>>("gain", 3),
-#         Variable::new::<Parameter<f64, Watt>>("limit", 4),
-#         Variable::new::<CalculatedParameter<f64, Kelvin>>("saturation", 5),
-#         Variable::new::<Output<f64, Watt>>("power", 6),
-#         Variable::new::<Output<Mode>>("mode", 7),
-#     ];
-#
-#     fn get(&self, vr: ValueReference, out: ValuesMut<'_>) -> Result<(), Error> {
-#         match vr.0 {
-#             1 => self.setpoint.get_into(out),
-#             2 => self.temperature.get_into(out),
-#             3 => self.gain.get_into(out),
-#             4 => self.limit.get_into(out),
-#             5 => self.saturation.get_into(out),
-#             6 => self.power.get_into(out),
-#             7 => self.mode.get_into(out),
-#             _ => Err(vr.unknown()),
-#         }
-#     }
-#
-#     fn set(&mut self, vr: ValueReference, values: Values<'_>) -> Result<(), Error> {
-#         match vr.0 {
-#             1 => self.setpoint.importer_set(values),
-#             2 => self.temperature.importer_set(values),
-#             3 => self.gain.importer_set(values),
-#             4 => self.limit.importer_set(values),
-#             _ => Err(vr.unknown()),
 #         }
 #     }
 # }
@@ -1137,35 +821,15 @@ The same checks, driven from Rust:
 #     StepResult, Tunable, ValueReference, Values, ValuesMut, Variable, Variables,
 # };
 #
-# /// An FMI `Enumeration`: a Rust enum and the value of each item.
-# #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+# /// An FMI `Enumeration`: a Rust enum, its items valued by their discriminants.
+# #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Enumeration)]
 # pub enum Mode {
 #     #[default]
-#     Off,
-#     Heating,
+#     Off = 1,
+#     Heating = 2,
 # }
 #
-# impl Enumeration for Mode {
-#     const NAME: &'static str = "Mode";
-#     const ITEMS: &'static [(&'static str, i64)] = &[("Off", 1), ("Heating", 2)];
-#
-#     fn to_i64(self) -> i64 {
-#         match self {
-#             Self::Off => 1,
-#             Self::Heating => 2,
-#         }
-#     }
-#
-#     fn from_i64(value: i64) -> Option<Self> {
-#         match value {
-#             1 => Some(Self::Off),
-#             2 => Some(Self::Heating),
-#             _ => None,
-#         }
-#     }
-# }
-#
-# #[derive(Clone)]
+# #[derive(Clone, Variables)]
 # pub struct Heater {
 #     pub setpoint: Input<f64, Celsius>,
 #     pub temperature: Input<f64, Celsius>,
@@ -1195,43 +859,6 @@ The same checks, driven from Rust:
 #     }
 # }
 #
-# impl Variables for Heater {
-#     const MODEL_NAME: &'static str = "heater";
-#     const INSTANTIATION_TOKEN: &'static str = "{heater-1}";
-#     const VARIABLES: &'static [Variable] = &[
-#         Variable::new::<Input<f64, Celsius>>("setpoint", 1),
-#         Variable::new::<Input<f64, Celsius>>("temperature", 2),
-#         Variable::new::<Parameter<f64, (), Tunable>>("gain", 3),
-#         Variable::new::<Parameter<f64, Watt>>("limit", 4),
-#         Variable::new::<CalculatedParameter<f64, Kelvin>>("saturation", 5),
-#         Variable::new::<Output<f64, Watt>>("power", 6),
-#         Variable::new::<Output<Mode>>("mode", 7),
-#     ];
-#
-#     fn get(&self, vr: ValueReference, out: ValuesMut<'_>) -> Result<(), Error> {
-#         match vr.0 {
-#             1 => self.setpoint.get_into(out),
-#             2 => self.temperature.get_into(out),
-#             3 => self.gain.get_into(out),
-#             4 => self.limit.get_into(out),
-#             5 => self.saturation.get_into(out),
-#             6 => self.power.get_into(out),
-#             7 => self.mode.get_into(out),
-#             _ => Err(vr.unknown()),
-#         }
-#     }
-#
-#     fn set(&mut self, vr: ValueReference, values: Values<'_>) -> Result<(), Error> {
-#         match vr.0 {
-#             1 => self.setpoint.importer_set(values),
-#             2 => self.temperature.importer_set(values),
-#             3 => self.gain.importer_set(values),
-#             4 => self.limit.importer_set(values),
-#             _ => Err(vr.unknown()),
-#         }
-#     }
-# }
-#
 # impl Fmu for Heater {
 #     const DESCRIPTION: Option<&'static str> = Some("A proportional heater");
 #
@@ -1257,7 +884,7 @@ use fmite::abi::{Logger, Status};
 use fmite::{Instance, Instantiation};
 
 let context = Instantiation { instance_name: "demo".to_owned(), resource_path: None };
-let mut heater = Instance::<Heater>::instantiate("{heater-1}", context, Logger::silent()).unwrap();
+let mut heater = Instance::<Heater>::instantiate(Heater::INSTANTIATION_TOKEN, context, Logger::silent()).unwrap();
 
 // No step before initialization.
 assert_eq!(heater.do_step(0.0, 1.0).0, Status::Error);
@@ -1299,4 +926,5 @@ fmite moves each of those facts into a type, which changes what can go wrong.
   is `catch_unwind`ed, every unsupported one logs and returns `fmi3Error`.
 - **No build script, no bindgen.** The ABI is transcribed from the headers once and
   checked against them by a test, so building an FMU needs no C toolchain of its own.
-- **Zero dependencies by default.** The derive and the archive writer are features.
+- **No runtime dependencies.** The derive runs at compile time, and
+  `default-features = false` leaves it out; the archive writer is a feature.

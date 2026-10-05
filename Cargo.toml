@@ -18,6 +18,7 @@ all-features = true
 members = ["examples/battery", "fmite-derive"]
 
 [features]
+default = ["derive"]
 # Writing the FMU archive, `fmite::package::package`.
 package = ["dep:zip"]
 # `#[derive(Variables, Enumeration)]`.
