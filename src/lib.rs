@@ -13,6 +13,7 @@ mod error;
 pub mod export;
 mod fmu;
 mod instance;
+pub mod log;
 #[cfg(feature = "package")]
 pub mod package;
 #[cfg(test)]
@@ -33,17 +34,6 @@ pub use variables::*;
 #[cfg(all(doctest, feature = "derive"))]
 #[doc = include_str!("../README.md")]
 mod readme {}
-
-/// The log categories fmite itself logs under, and the only ones an FMU declares: a
-/// refused call is logged as an error, a panic as fatal. Each is a name and its
-/// description, as `<LogCategories>` writes them.
-pub const LOG_CATEGORIES: [(&str, &str); 2] = [
-    ("logStatusError", "A refused call, and why"),
-    (
-        "logStatusFatal",
-        "A panic inside the FMU; the instance takes no more calls",
-    ),
-];
 
 // Sealed trait for this library. No type outside of this crate can implement it, so any trait in
 // this library that's protected by this, also cannot be implemented by types outside of this

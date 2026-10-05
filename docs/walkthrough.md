@@ -881,7 +881,8 @@ The same checks, driven from Rust:
 #         Ok(StepResult::Complete)
 #     }
 # }
-use fmite::abi::{Logger, Status};
+use fmite::abi::Status;
+use fmite::log::Logger;
 use fmite::{Instance, Instantiation};
 
 let context = Instantiation { instance_name: "demo".to_owned(), resource_path: None };

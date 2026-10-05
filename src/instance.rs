@@ -2,12 +2,13 @@
 //! the standard's state machine and against `T::VARIABLES`, so that `T` sees only the
 //! calls the standard allows, with references it knows and values of the right type.
 
-use crate::abi::{Logger, Status};
+use crate::abi::Status;
 use crate::co_simulation::Clock;
+use crate::log::{self, Logger};
 use crate::values::surplus;
 use crate::{
-    CoSimulation, Error, Fmu, Instantiation, LOG_CATEGORIES, State, Step, StepResult,
-    ValueReference, Values, ValuesMut, Variable, check,
+    CoSimulation, Error, Fmu, Instantiation, State, Step, StepResult, ValueReference, Values,
+    ValuesMut, Variable, check,
 };
 
 /// Where the instance is in the Co-Simulation state machine. Each variant holds what its
@@ -108,11 +109,7 @@ impl<T: Fmu> Instance<T> {
     /// Records a panic: logged as fatal, and the instance takes no more calls.
     pub fn poison(&mut self, function: &str, panic: &str) -> Status {
         self.mode = Mode::Fatal;
-        self.logger.log(
-            Status::Fatal,
-            "logStatusFatal",
-            &format!("{function} panicked: {panic}"),
-        );
+        self.logger.fatal(&format!("{function} panicked: {panic}"));
         Status::Fatal
     }
 
@@ -120,7 +117,7 @@ impl<T: Fmu> Instance<T> {
     /// that every category is one the FMU declares.
     pub fn set_debug_logging(&mut self, categories: &[&str]) -> Status {
         let unknown = (categories.iter())
-            .find(|category| !LOG_CATEGORIES.iter().any(|(name, _)| name == *category));
+            .find(|category| !log::CATEGORIES.iter().any(|(name, _)| name == *category));
         match unknown {
             Some(category) => self.answer(Err(Error::new(format!(
                 "this FMU declares no log category {category}"
@@ -453,7 +450,7 @@ mod tests {
     fn debug_logging_accepts_only_the_declared_categories() {
         let mut instance = stepping();
         assert_eq!(instance.set_debug_logging(&[]), Status::Ok);
-        assert_eq!(instance.set_debug_logging(&["logStatusError"]), Status::Ok);
+        assert_eq!(instance.set_debug_logging(&[log::ERROR]), Status::Ok);
         assert_eq!(instance.set_debug_logging(&["logEvents"]), Status::Error);
     }
 }

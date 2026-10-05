@@ -55,7 +55,7 @@ Each is a `compile_fail` test in the walkthrough.
 
 - **No build script, no bindgen.** The ABI is transcribed from the 3.0.1 headers and a
   C test links every symbol against them.
-- **Unsafe only at the boundary**, in `abi` and `export!`; every pointer is checked
+- **Unsafe only at the boundary**, in `log` and `export!`; every pointer is checked
   before a slice is made from it. Your crate keeps `#![deny(unsafe_code)]`.
 - **No panic reaches the importer.** Every export runs in `catch_unwind`; a panic is
   `fmi3Fatal` and a log message. An unsupported function answers `fmi3Error` and logs

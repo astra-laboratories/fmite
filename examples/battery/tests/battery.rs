@@ -2,8 +2,9 @@
 //! model description checked against the standard's schema.
 
 use battery::{Battery, Mode};
-use fmite::abi::{Logger, Status};
+use fmite::abi::Status;
 use fmite::description::model_description;
+use fmite::log::Logger;
 use fmite::{Instance, Instantiation, Values, ValuesMut, Variables};
 
 fn initialized(current: f64) -> Instance<Battery> {

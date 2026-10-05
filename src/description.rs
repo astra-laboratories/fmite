@@ -6,8 +6,9 @@
 use core::fmt::Write as _;
 
 use crate::export::Exported;
+use crate::log;
 use crate::unit::Unit;
-use crate::{CoSimulation, Error, Fmu, Kind, LOG_CATEGORIES, ValueReference, ValuesMut, Variable};
+use crate::{CoSimulation, Error, Fmu, Kind, ValueReference, ValuesMut, Variable};
 
 /// The `modelIdentifier`: the model name with `-` as `_`, which is also the file name
 /// Cargo gives the `cdylib`.
@@ -54,7 +55,7 @@ pub fn model_description<T: CoSimulation + Exported>() -> Result<String, Error> 
     type_definitions(&mut xml, T::VARIABLES);
 
     xml.open("LogCategories", &[]);
-    for (name, description) in LOG_CATEGORIES {
+    for (name, description) in log::CATEGORIES {
         xml.empty(
             "Category",
             &[

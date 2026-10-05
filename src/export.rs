@@ -13,7 +13,8 @@ use core::ffi::{CStr, c_char};
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use crate::abi::{Handle, IntermediateUpdateCallback, LogMessageCallback, Logger, Status};
+use crate::abi::{Handle, IntermediateUpdateCallback, LogMessageCallback, Status};
+use crate::log::Logger;
 use crate::{Carrier, CoSimulation, Fmu, Instance, Instantiation, Saved, State};
 
 /// A model that [`export!`](crate::export!) made symbols for, and what its export list declared, so
