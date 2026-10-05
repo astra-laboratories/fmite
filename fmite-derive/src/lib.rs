@@ -12,9 +12,7 @@ use proc_macro2::{Span, TokenStream as Tokens};
 use quote::{ToTokens, quote};
 use syn::{Data, DeriveInput, Error, Expr, Fields, Lit, Type, UnOp, parse_macro_input};
 
-/// The field types that declare a variable. A field's type is matched by its last path
-/// segment, so these names must reach the struct unrenamed; any other field is private
-/// state.
+/// The possible field types of a variable.
 const VARIABLE_TYPES: [&str; 6] = [
     "Input",
     "Output",
@@ -24,11 +22,10 @@ const VARIABLE_TYPES: [&str; 6] = [
     "Field",
 ];
 
-/// Implements `fmite::Variables` for a struct. Each field typed `Input`, `Output`,
+/// Implements `fmite::Variables` for a struct. Each field of type `Input`, `Output`,
 /// `Parameter`, `CalculatedParameter` or `Local` is a variable, numbered in declaration
 /// order from 1; `time` is 0. `MODEL_NAME` is the crate's package name, and
-/// `INSTANTIATION_TOKEN` a hash of the variable declarations, so it changes exactly
-/// when they do.
+/// `INSTANTIATION_TOKEN` a hash of the variable declarations.
 #[proc_macro_derive(Variables)]
 pub fn derive_variables(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
