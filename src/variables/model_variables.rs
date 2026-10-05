@@ -1,33 +1,31 @@
-//! The variable list: `Variables`, the table a model's variables are declared and
-//! reached through by value reference, and `check`, which refuses a list the model
-//! description could not state.
+//! `Variables`, which declares a model's variables and reads and writes them by value
+//! reference, and `check`, which rejects a list the model description cannot express.
 
 use super::Variable;
 use super::unit::Unit;
 use crate::{Error, Values, ValuesMut};
 
-/// A value reference: how the importer names a variable. `0` is `time`, which fmite
-/// declares itself.
+/// A value reference: the number the importer uses for a variable. `0` is `time`,
+/// which fmite declares itself.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ValueReference(pub u32);
 
 impl ValueReference {
-    /// The error a `get` or `set` answers for a reference it does not know. The
-    /// instance looks every reference up first, so an implementation reaches this only
-    /// when its `match` disagrees with its `VARIABLES`.
+    /// The error for a reference `get` or `set` does not know. The instance checks every
+    /// reference first, so this happens only when the `match` disagrees with
+    /// `VARIABLES`.
     #[must_use]
     pub fn unknown(self) -> Error {
         Error::new(format!("unknown value reference {}", self.0))
     }
 }
 
-/// The model's variables: the list the model description declares, and the table that
-/// reads and writes them by value reference.
+/// The model's variables: the list in the model description, and the lookup that reads
+/// and writes them by value reference.
 ///
-/// `#[derive(fmite::Variables)]` writes this from a struct's fields. A code generator,
-/// or anyone who prefers it, writes it by hand, naming each field's type in
-/// [`Variable::new`] so that FMI 3.0 Table 22 checks the list exactly as it checks a
-/// field. Each `match` arm is one call on the field:
+/// `#[derive(fmite::Variables)]` writes this from a struct's fields. To write it by
+/// hand, name each field's type in [`Variable::new`], so FMI 3.0 Table 22 checks the
+/// list the same way. Each `match` arm is one call on the field:
 ///
 /// ```
 /// use fmite::{Error, Input, Output, ValueReference, Values, ValuesMut, Variable};
@@ -64,22 +62,22 @@ impl ValueReference {
 /// ```
 ///
 /// `set` lists only the variables the importer may set. The instance has already
-/// refused the rest, by the `settable_in_*` answers in `VARIABLES`.
+/// rejected the rest, using the `settable_in_*` answers in `VARIABLES`.
 pub trait Variables {
     const MODEL_NAME: &'static str;
     const INSTANTIATION_TOKEN: &'static str;
     const VARIABLES: &'static [Variable];
 
-    /// Writes the variable's values to `out`, which holds exactly as many as the
-    /// variable has, in its FMI type.
+    /// Writes the variable's values to `out`, which has the variable's FMI type and
+    /// exactly its number of values.
     ///
     /// # Errors
     ///
     /// On an unknown reference, or values of the wrong type or count.
     fn get(&self, vr: ValueReference, out: ValuesMut<'_>) -> Result<(), Error>;
 
-    /// Sets the variable from `values`, which hold exactly as many as the variable has,
-    /// in its FMI type.
+    /// Sets the variable from `values`, which have the variable's FMI type and exactly
+    /// its number of values.
     ///
     /// # Errors
     ///
@@ -88,14 +86,14 @@ pub trait Variables {
     fn set(&mut self, vr: ValueReference, values: Values<'_>) -> Result<(), Error>;
 }
 
-/// Refuses, at compile time when called in `const`, a variable list the model
-/// description could not state: a value reference that is 0, which is `time`'s, or is
-/// used twice; a name used twice; two units of one name with different definitions;
-/// two enumerations of one name with different items.
+/// Rejects a variable list the model description cannot express: value reference 0
+/// (which is `time`'s), a value reference or name used twice, or two units or two
+/// enumerations that share a name but differ. Called in `const`, it fails at compile
+/// time.
 ///
 /// # Panics
 ///
-/// On the first of those it finds, naming it.
+/// On the first problem it finds, naming it.
 pub const fn check(variables: &[Variable]) {
     let mut i = 0;
     while i < variables.len() {

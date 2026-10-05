@@ -1,5 +1,5 @@
-//! Logging: the categories an FMU declares, and the importer's logger, the one thing
-//! that calls back across the ABI.
+//! Logging: the log categories an FMU declares, and the importer's logger. The logger
+//! is the only thing that calls back across the ABI.
 
 #![allow(unsafe_code)]
 
@@ -14,7 +14,7 @@ pub const ERROR: &str = "logStatusError";
 pub const FATAL: &str = "logStatusFatal";
 
 /// The categories fmite logs under, and the only ones an FMU declares. Each is a name
-/// and its description, as `<LogCategories>` writes them.
+/// and a description, as written in `<LogCategories>`.
 pub const CATEGORIES: [(&str, &str); 2] = [
     (ERROR, "A refused call, and why"),
     (
@@ -23,7 +23,7 @@ pub const CATEGORIES: [(&str, &str); 2] = [
     ),
 ];
 
-/// The importer's logger: its callback and the environment it passes back.
+/// The importer's logger: its callback, and the environment pointer passed back to it.
 pub struct Logger {
     environment: Handle,
     callback: LogMessageCallback,
@@ -41,8 +41,8 @@ impl Logger {
 
     /// # Safety
     ///
-    /// `callback`, if any, must be a function the importer keeps valid for the life of
-    /// the instance, and `environment` the pointer it expects back.
+    /// `callback`, if set, must stay valid for the life of the instance, and
+    /// `environment` must be the pointer it expects back.
     #[must_use]
     pub unsafe fn new(environment: Handle, callback: LogMessageCallback) -> Self {
         Self {
@@ -61,8 +61,8 @@ impl Logger {
         self.log(Status::Fatal, FATAL, message);
     }
 
-    /// Passes a message to the importer. An interior NUL, which C cannot carry, becomes
-    /// a space.
+    /// Sends a message to the importer. C strings cannot hold a NUL, so an interior NUL
+    /// becomes a space.
     pub fn log(&self, status: Status, category: &str, message: &str) {
         let Some(callback) = self.callback else {
             return;

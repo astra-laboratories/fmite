@@ -1,5 +1,6 @@
 //! Units. FMI defines a unit by the exponents of eight base units and the map
-//! `factor * value + offset`. A variable has a unit by type: `Input<f64, unit::Volt>`.
+//! `factor * value + offset`. A variable's unit is part of its type:
+//! `Input<f64, unit::Volt>`.
 //!
 //! ```
 //! use fmite::unit::{Unit, UnitT};
@@ -16,10 +17,9 @@
 
 use super::{Float, FmiType};
 
-/// A unit: its exponents of the SI base units and the radian, which FMI counts as one,
-/// and `factor` and `offset`. The fields are `<BaseUnit>`'s attributes, one each.
-/// Built in `const` from the units below: `Unit::meter().per(Unit::second().pow(2))`
-/// is m/s².
+/// A unit: exponents of the SI base units and the radian (a base unit in FMI), plus
+/// `factor` and `offset`. Each field is one `<BaseUnit>` attribute. Build one in `const`
+/// from the units below: `Unit::meter().per(Unit::second().pow(2))` is m/s².
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Unit {
     pub kilogram: i8,
@@ -65,20 +65,20 @@ impl Unit {
         Self { offset, ..self }
     }
 
-    /// The product. An offset does not compose, so the result has none.
+    /// The product. Offsets do not compose, so the result has none.
     #[must_use]
     pub const fn times(self, other: Self) -> Self {
         self.combine(other, 1, self.factor * other.factor)
     }
 
-    /// The quotient. An offset does not compose, so the result has none.
+    /// The quotient. Offsets do not compose, so the result has none.
     #[must_use]
     pub const fn per(self, other: Self) -> Self {
         self.combine(other, -1, self.factor / other.factor)
     }
 
-    /// The `n`th power, negative for a reciprocal. Repeated [`times`](Self::times) or
-    /// [`per`](Self::per), so it has no offset either.
+    /// The `n`th power; a negative `n` gives the reciprocal. Built from
+    /// [`times`](Self::times) or [`per`](Self::per), so it has no offset either.
     #[must_use]
     pub const fn pow(self, n: i8) -> Self {
         let mut power = Self::one();
@@ -94,8 +94,8 @@ impl Unit {
         power
     }
 
-    /// Every field named, no `..self`: a ninth base unit does not compile until it
-    /// combines too.
+    /// Names every field instead of using `..self`, so a new base unit fails to compile
+    /// until it is handled here.
     const fn combine(self, other: Self, sign: i8, factor: f64) -> Self {
         Self {
             kilogram: self.kilogram + sign * other.kilogram,
@@ -112,24 +112,23 @@ impl Unit {
     }
 }
 
-/// A type standing for a [`Unit`], so that a variable can name one in its type.
-/// Stable Rust takes no struct as a const generic, so the unit cannot be the
-/// parameter itself. `NAME` is what the model description calls it.
+/// A type that stands for a [`Unit`], so a variable can name its unit in its type.
+/// Stable Rust allows no struct as a const generic, so the unit itself cannot be the
+/// parameter. `NAME` is the unit's name in the model description.
 pub trait UnitT {
     const NAME: &'static str;
     const UNIT: Unit;
 }
 
-/// `Self` is a legal unit for a variable of type `T`: `()` for none on any type, or a
-/// [`UnitT`] on a float. FMI 3.0 puts `unit` in `fmi3RealBaseAttributes` alone, so an
-/// integer, boolean or string variable has no unit.
+/// `Self` is a valid unit for a variable of type `T`: `()` (no unit) on any type, or a
+/// [`UnitT`] on a float. FMI 3.0 puts `unit` only in `fmi3RealBaseAttributes`, so
+/// integer, boolean and string variables have no unit.
 ///
-/// A relation, like [`VariabilityOf`](super::VariabilityOf), and implemented by fmite
-/// alone: a unit is declared through [`UnitT`]. It cannot fold into `UnitT`: `()`
-/// would then be a `UnitT` too, and the impl for a unit on a float would overlap the
-/// impl for `()`. `DECLARED` repeats no definition; it only lifts `()` into `None`,
-/// and pairs a unit with its name. It is a reference, so a variable carries a pointer
-/// and every variable of a unit shares the one pair.
+/// Like [`VariabilityOf`](super::VariabilityOf), only fmite implements it. Declare a
+/// unit through [`UnitT`]. The two traits cannot merge: `()` would then be a `UnitT`,
+/// and the float impl would overlap the `()` impl. `DECLARED` is `None` for `()`, and
+/// otherwise the unit paired with its name. It is a reference, so every variable of
+/// one unit shares the same pair.
 #[diagnostic::on_unimplemented(message = "a `{T}` variable cannot have unit `{Self}`")]
 pub trait UnitOf<T> {
     const DECLARED: Option<&'static (&'static str, Unit)>;
@@ -139,18 +138,18 @@ impl<T: FmiType> UnitOf<T> for () {
     const DECLARED: Option<&'static (&'static str, Unit)> = None;
 }
 
-// simple types - according to the FMI 3.0 standard, only float numbers have units
+// Scalars: only floats have units.
 impl<U: UnitT, T: Float> UnitOf<T> for U {
     const DECLARED: Option<&'static (&'static str, Unit)> = Some(&(U::NAME, U::UNIT));
 }
 
-// arrays of type T and length N
+// Arrays: an array has its element's unit.
 impl<U: UnitT + UnitOf<T>, T, const N: usize> UnitOf<[T; N]> for U {
     const DECLARED: Option<&'static (&'static str, Unit)> = <U as UnitOf<T>>::DECLARED;
 }
 
-/// Declares a unit per line: `Type, constructor = "name", unit;`, the type for a
-/// variable to name and the `const fn` on [`Unit`] that builds its value.
+/// Declares one unit per line: `Type, constructor = "name", unit;`. `Type` is what a
+/// variable names, and `constructor` is the `const fn` on [`Unit`] that builds it.
 macro_rules! units {
     ($($ty:ident, $constructor:ident = $name:literal, $unit:expr;)*) => {
         impl Unit {

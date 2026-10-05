@@ -8,9 +8,8 @@ use super::{
 };
 use crate::Error;
 
-/// What a field type says about the variable it declares: its FMI type and shape, its
-/// row of Table 22, read as attribute text and as the answers the instance needs, and
-/// its unit.
+/// What a field type says about its variable: FMI type and shape, Table 22 row (as
+/// attribute text and as the answers the instance needs), and unit.
 pub trait Definition {
     const KIND: Kind;
     const DIMS: Dims;
@@ -18,8 +17,8 @@ pub trait Definition {
     const CAUSALITY: &'static str;
     const VARIABILITY: &'static str;
     const INITIAL: &'static str;
-    /// The row's default initial. The model description leaves `initial` out when it
-    /// is this, and for an input it must: the standard allows no `initial` there.
+    /// The row's default initial. The model description omits `initial` when it is
+    /// this. An input must omit it, since the standard allows no `initial` there.
     const DEFAULT_INITIAL: &'static str;
     const HAS_START: bool;
     const SETTABLE_IN_INITIALIZATION: bool;
@@ -48,8 +47,8 @@ where
     const UNIT: Option<&'static (&'static str, Unit)> = U::DECLARED;
 }
 
-/// One entry of `<ModelVariables>`. `causality`, `variability` and `initial` are the
-/// attribute text, for the model description only; the instance reads the answers.
+/// One entry of `<ModelVariables>`. `causality`, `variability` and `initial` are
+/// attribute text for the model description. The instance uses the answers instead.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Variable {
     pub name: &'static str,
@@ -88,8 +87,8 @@ impl Variable {
         }
     }
 
-    /// The number of values this variable takes from a call carrying `carried` values,
-    /// `left` of them still unread.
+    /// How many values this variable takes from a call carrying `carried` values, with
+    /// `left` still unread.
     ///
     /// # Errors
     ///

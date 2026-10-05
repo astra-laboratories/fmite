@@ -1,7 +1,7 @@
 //! `Dims`: the shape of an array variable, as `<Dimension>` writes it.
 
-/// The fixed `<Dimension>`s of a variable, outermost first: `[[f32; 3]; 2]` is `[2, 3]`,
-/// and a scalar has none. Built in `const`; a ninth rank fails to compile.
+/// The fixed `<Dimension>`s of a variable, outermost first: `[[f32; 3]; 2]` is `[2, 3]`.
+/// A scalar has none. Built in `const`. More than eight dimensions fail to compile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Dims {
     len: u8,
@@ -14,7 +14,7 @@ impl Dims {
         sizes: [0; 8],
     };
 
-    /// These dimensions with one more, `n`, outside them.
+    /// These dimensions with `n` added outside them.
     #[must_use]
     pub const fn outer(self, n: usize) -> Self {
         let mut sizes = [0; 8];
@@ -35,7 +35,7 @@ impl Dims {
         &self.sizes[..usize::from(self.len)]
     }
 
-    /// The number of scalar values, one for a scalar.
+    /// The number of scalar values: 1 for a scalar.
     #[must_use]
     pub const fn count(&self) -> usize {
         let mut count = 1;

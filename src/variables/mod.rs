@@ -1,8 +1,8 @@
-//! Model variables. Causality, variability, initial and unit are type parameters, and
-//! FMI 3.0 Table 22 is encoded once, in `table.rs`. The crate docs prove, as
-//! `compile_fail` tests, what an illegal combination and an illegal write look like.
+//! Model variables. Causality, variability, initial and unit are type parameters.
+//! FMI 3.0 Table 22 is encoded once, in `table.rs`. The crate docs show, as
+//! `compile_fail` tests, what an invalid combination or write looks like.
 
-/// Implements a marker trait whose one item is its attribute text.
+/// Implements a marker trait whose only item is its attribute text.
 macro_rules! named {
     ($trait:ident { $($ty:ty => $name:literal,)* }) => {
         $(

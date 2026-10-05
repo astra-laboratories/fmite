@@ -1,7 +1,7 @@
 //! The exported symbols. [`export!`](crate::export!) writes the 75 `fmi3…` functions of
-//! an FMU, and each forwards to its body in `calls.rs`, so the unsafe code lives in this
-//! crate and not in the implementor's. A function the FMU does not implement answers
-//! with one of the reasons below.
+//! an FMU. Each one calls its body in `calls.rs`, so the unsafe code lives in this crate
+//! and not in the implementor's. A function the FMU does not implement fails with one of
+//! the reasons below.
 
 mod calls;
 
@@ -9,25 +9,25 @@ pub use calls::*;
 
 use crate::Fmu;
 
-/// A model that [`export!`](crate::export!) made symbols for, and what its export list declared, so
-/// the description and the symbols read one list.
+/// A model that [`export!`](crate::export!) made symbols for. It records the export
+/// list, so the model description and the symbols agree.
 pub trait Exported: Fmu {
-    /// The FMU state functions are exported, and `canGetAndSetFMUState` is written.
+    /// Whether the FMU state functions are exported. Written as `canGetAndSetFMUState`.
     const STATE: bool;
 }
 
-/// Makes the `fmi3…` symbols of an FMU, once, in its `cdylib`.
+/// Exports the `fmi3…` symbols of an FMU from its `cdylib`.
 ///
 /// ```ignore
 /// fmite::export!(Battery: CoSimulation + State);
 /// ```
 ///
-/// The list after the colon is checked: `State` requires `Battery: Clone`, and is a
-/// compile error without it. A function of an interface or capability left out of the
-/// list is still exported; it answers `fmi3Error` and logs why.
+/// The list after the colon is checked: `State` needs `Battery: Clone` and fails to
+/// compile without it. Functions of an interface or capability not in the list are still
+/// exported. They return `fmi3Error` and log why.
 ///
-/// The symbols are global and must exist once per shared library, so the macro belongs
-/// in the crate that builds the FMU's `cdylib`, not in a library other crates depend on.
+/// The symbols are global and must appear once per shared library. Call the macro in the
+/// crate that builds the FMU's `cdylib`, not in a library other crates depend on.
 #[macro_export]
 macro_rules! export {
     ($model:ty: CoSimulation + State) => {

@@ -1,10 +1,10 @@
-//! What every FMU implements, whichever interface it exports: the core `Fmu`, what it
-//! is instantiated from, and the `State` capability.
+//! What every FMU implements, whatever interface it exports: the core `Fmu` trait, the
+//! instantiation context, and the `State` capability.
 
 use crate::{Error, Variables};
 
-/// What the importer passes at instantiation. The instance keeps it, and `fmi3Reset`
-/// instantiates the model from it again.
+/// What the importer passes at instantiation. The instance keeps it so `fmi3Reset` can
+/// instantiate the model again.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Instantiation {
     pub instance_name: String,
@@ -32,9 +32,9 @@ impl Experiment {
 /// What every interface shares. Every method has a default, so a model that needs no
 /// setup implements it in one line.
 ///
-/// A calculated parameter, or a fixed or tunable local, is computed from the
-/// parameters in `exit_initialization`, once the importer has set them. A tunable one
-/// may be computed again in a step, since a tunable parameter may change between steps.
+/// Compute calculated parameters, and fixed or tunable locals, from the parameters in
+/// `exit_initialization`, after the importer has set them. A tunable one may be
+/// recomputed in a step, since tunable parameters can change between steps.
 #[allow(
     unused_variables,
     reason = "defaults ignore what an override would read"
@@ -47,38 +47,38 @@ pub trait Fmu: Variables + Default + Sized {
     ///
     /// # Errors
     ///
-    /// Refuses the instantiation; the importer gets a null instance, or `fmi3Error`
-    /// from the reset.
+    /// Fails the instantiation. The importer gets a null instance, or `fmi3Error` from
+    /// the reset.
     fn instantiate(context: &Instantiation) -> Result<Self, Error> {
         Ok(Self::default())
     }
 
     /// # Errors
     ///
-    /// Refuses initialization with `fmi3Error`.
+    /// `fmi3EnterInitializationMode` returns `fmi3Error`.
     fn enter_initialization(&mut self, start: f64, stop: Option<f64>) -> Result<(), Error> {
         Ok(())
     }
 
-    /// The parameters are set; the model computes what follows from them.
+    /// Called once the parameters are set. The model computes what depends on them.
     ///
     /// # Errors
     ///
-    /// Refuses the end of initialization with `fmi3Error`.
+    /// `fmi3ExitInitializationMode` returns `fmi3Error`.
     fn exit_initialization(&mut self) -> Result<(), Error> {
         Ok(())
     }
 
     /// # Errors
     ///
-    /// Answers `fmi3Terminate` with `fmi3Error`.
+    /// `fmi3Terminate` returns `fmi3Error`.
     fn terminate(&mut self) -> Result<(), Error> {
         Ok(())
     }
 }
 
-/// The FMU state capability: the importer may save the instance and restore it. A
-/// saved state is a typed copy, so any `Fmu` that is `Clone` has it.
+/// The FMU state capability: the importer may save the instance and restore it later.
+/// A saved state is a typed copy, so every `Fmu` that is `Clone` has it.
 pub trait State: Fmu + Clone {}
 
 impl<T: Fmu + Clone> State for T {}

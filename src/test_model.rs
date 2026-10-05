@@ -1,5 +1,5 @@
-//! A small model the unit tests share: a gain with a tunable parameter, a calculated
-//! one, a unit, an array output and an enumeration.
+//! A small model shared by the unit tests: a gain with a tunable parameter, a calculated
+//! parameter, a unit, an array output, and an enumeration.
 
 use crate::export::Exported;
 use crate::unit::Volt;

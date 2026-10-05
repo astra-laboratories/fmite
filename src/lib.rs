@@ -1,4 +1,4 @@
-// The walkthrough's examples derive, so it is the crate documentation with `derive` on.
+// The walkthrough's examples use the derives, so it is the crate docs only with `derive`.
 #![cfg_attr(feature = "derive", doc = include_str!("../docs/walkthrough.md"))]
 #![deny(unsafe_code)]
 #![deny(clippy::all)]
@@ -35,13 +35,12 @@ pub use variables::*;
 #[doc = include_str!("../README.md")]
 mod readme {}
 
-// Sealed trait for this library. No type outside of this crate can implement it, so any trait in
-// this library that's protected by this, also cannot be implemented by types outside of this
-// library.
+// Sealed traits. Only this crate can implement them, so a trait that requires one cannot
+// be implemented outside this crate either.
 mod sealed {
     pub trait Sealed {}
 
-    /// Seals `FmiType` apart from `Sealed`: every `Enumeration` gets this one, and
-    /// must not get `Sealed`, or an author's enum could implement `Float` or `Causality`.
+    /// Seals `FmiType` separately from `Sealed`. Every `Enumeration` implements this one
+    /// but not `Sealed`, or a user's enum could implement `Float` or `Causality`.
     pub trait Value {}
 }

@@ -6,12 +6,12 @@ use super::{
     Calculated, Constant, Continuous, Discrete, Exact, Fixed, Initial, Tunable, Variability,
 };
 
-/// A row of the table: `Self` is a legal variability for causality `C`.
-/// `DefaultInitial` is the first initial the row lists.
+/// A row of the table: `Self` is a valid variability for causality `C`.
+/// `DefaultInitial` is the row's first initial.
 ///
-/// The two flags say what the host may set. In Instantiated and Initialization Mode,
-/// a variable whose row is `INITIALIZATION` may be set if it has a start value. In
-/// Step Mode, only inputs and tunable parameters may be.
+/// The two flags say when the importer may set the variable. In Instantiated and
+/// Initialization Mode, a variable whose row has `INITIALIZATION` may be set if it has
+/// a start value. In Step Mode, only inputs and tunable parameters may be set.
 #[diagnostic::on_unimplemented(
     message = "a `{C}` variable cannot have variability `{Self}`",
     note = "FMI 3.0 Table 22"
@@ -22,16 +22,16 @@ pub trait VariabilityFor<C: Causality>: Variability {
     const STEP: bool;
 }
 
-/// A cell of the table: `Self` is a legal initial for causality `C` with variability `V`.
+/// A cell of the table: `Self` is a valid initial for causality `C` and variability `V`.
 #[diagnostic::on_unimplemented(
     message = "a `{C}` variable with variability `{V}` cannot have initial `{Self}`",
     note = "FMI 3.0 Table 22"
 )]
 pub trait InitialFor<C, V: ?Sized>: Initial {}
 
-/// `C` with variability `V` is computed by the model, so model code may write it. An
-/// input, a parameter and a constant are not: the importer or the start value gives
-/// their value, and model code only reads it.
+/// The model computes a `C` variable with variability `V`, so model code may write it.
+/// Inputs, parameters and constants are read-only: their value comes from the importer
+/// or the start value.
 pub trait Writable<V> {}
 
 /// One line per row: `C: V => [default initial, other initials] flags`, where the

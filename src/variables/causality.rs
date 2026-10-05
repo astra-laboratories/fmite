@@ -1,5 +1,5 @@
-//! Causality: who computes a variable. The markers live here, apart from the root,
-//! because `Input` and `Output` also name the field aliases.
+//! Causality: who computes a variable. The markers live here, not in the crate root,
+//! because `Input` and `Output` are also field alias names.
 
 use crate::sealed::Sealed;
 

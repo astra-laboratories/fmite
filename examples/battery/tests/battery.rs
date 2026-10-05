@@ -1,5 +1,5 @@
-//! The battery driven through `fmite::Instance`, as an importer would drive it, and its
-//! model description checked against the standard's schema.
+//! Drives the battery through `fmite::Instance` as an importer would, and checks its
+//! model description against the standard's schema.
 
 use battery::{Battery, Mode};
 use fmite::abi::Status;

@@ -1,9 +1,9 @@
-//! `Error`, what a refused call reports.
+//! `Error`: what a refused call reports.
 
 use std::borrow::Cow;
 use std::fmt;
 
-/// A refused call. The message goes to the importer's logger, and the call answers
+/// A refused call. The message goes to the importer's logger, and the call returns
 /// `fmi3Error`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Error(Cow<'static, str>);

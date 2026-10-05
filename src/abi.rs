@@ -1,10 +1,10 @@
-//! The C ABI of FMI 3.0, transcribed by hand from the 3.0.1 headers
-//! (`fmi3PlatformTypes.h`, `fmi3FunctionTypes.h`).
+//! The C ABI of FMI 3.0, copied by hand from the 3.0.1 headers (`fmi3PlatformTypes.h`,
+//! `fmi3FunctionTypes.h`).
 //!
-//! The scalar typedefs are Rust's own types (`fmi3Float64` is `f64`, `fmi3Boolean` is
-//! `bool`, `fmi3ValueReference` is `u32`), so they need no aliases here. The function
-//! signatures live in [`export!`](crate::export!), and `tests/abi.c` checks every one of
-//! them against the headers.
+//! The scalar typedefs are plain Rust types (`fmi3Float64` is `f64`, `fmi3Boolean` is
+//! `bool`, `fmi3ValueReference` is `u32`), so they need no aliases. The function
+//! signatures are in [`export!`](crate::export!), and `tests/abi.c` checks each one
+//! against the headers.
 
 use core::ffi::{c_char, c_void};
 

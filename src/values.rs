@@ -1,5 +1,5 @@
-//! `Values` and `ValuesMut`: the typed slices a get or set carries, one variant per C
-//! function. An enumeration travels as `Int64`, as it does across the C API.
+//! `Values` and `ValuesMut`: the typed slices a get or set call carries, one variant per
+//! C function. An enumeration travels as `Int64`, as in the C API.
 
 use crate::Error;
 
@@ -18,8 +18,7 @@ macro_rules! values {
         }
 
         impl<'a> Values<'a> {
-            /// The first `n` values, which this then no longer holds; `None` if there
-            /// are fewer.
+            /// Takes the first `n` values off the front. `None` if there are fewer.
             pub fn split_front(&mut self, n: usize) -> Option<Values<'a>> {
                 match self {
                     $(Self::$variant(values) => {
@@ -42,7 +41,7 @@ macro_rules! values {
                 self.len() == 0
             }
 
-            /// The element name of the variable type these values belong to.
+            /// The XML element name of the variable type, such as `Float64`.
             #[must_use]
             pub fn type_name(&self) -> &'static str {
                 match self {
@@ -52,8 +51,7 @@ macro_rules! values {
         }
 
         impl<'a> ValuesMut<'a> {
-            /// The first `n` slots, which this then no longer holds; `None` if there
-            /// are fewer.
+            /// Takes the first `n` slots off the front. `None` if there are fewer.
             pub fn split_front(&mut self, n: usize) -> Option<ValuesMut<'a>> {
                 match self {
                     $(Self::$variant(values) => {
@@ -79,7 +77,7 @@ macro_rules! values {
                 self.len() == 0
             }
 
-            /// The element name of the variable type this buffer belongs to.
+            /// The XML element name of the variable type, such as `Float64`.
             #[must_use]
             pub fn type_name(&self) -> &'static str {
                 match self {
@@ -102,7 +100,7 @@ macro_rules! values {
     };
 }
 
-/// A scalar type a get or set function carries: `f64` for `fmi3GetFloat64`.
+/// A scalar type a get or set function carries, such as `f64` for `fmi3GetFloat64`.
 pub trait Carrier: Copy + 'static {
     fn values(values: &[Self]) -> Values<'_>;
     fn values_mut(values: &mut [Self]) -> ValuesMut<'_>;
@@ -122,11 +120,11 @@ values! {
     Boolean(bool),
 }
 
-/// The error for `left` values a call carried beyond what its variables take.
+/// Fails if a call carried `left` values more than its variables take.
 ///
 /// # Errors
 ///
-/// When `left` is not zero.
+/// If `left` is not zero.
 pub fn surplus(left: usize) -> Result<(), Error> {
     if left == 0 {
         Ok(())

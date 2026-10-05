@@ -1,5 +1,5 @@
-//! `#[derive(Variables)]` writes the list a hand-written impl would. This is the list
-//! `Battery` declared by hand before it derived it.
+//! `#[derive(Variables)]` writes the same list as a hand-written impl. This is the list
+//! `Battery` declared by hand before it used the derive.
 
 use battery::{Battery, KelvinPerSecond, MilliOhm, Mode, Percent};
 use fmite::unit::{Ampere, AmpereHour, Celsius, Volt, WattHour};

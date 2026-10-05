@@ -1,8 +1,8 @@
 //! The bodies of the exported C functions, generic over the model.
 //!
-//! Every function runs inside `catch_unwind`: a panic becomes `fmi3Fatal` and a log
-//! message, never an unwind across the ABI. Every pointer is checked before use: a null
-//! instance is `fmi3Error`, and a null array is an empty slice when its count is zero
+//! Every function runs inside `catch_unwind`, so a panic becomes `fmi3Fatal` and a log
+//! message instead of unwinding across the ABI. Every pointer is checked before use. A
+//! null instance gives `fmi3Error`. A null array is an empty slice if its count is zero,
 //! and `fmi3Error` otherwise.
 
 #![allow(unsafe_code)]
@@ -27,8 +27,8 @@ fn panic_message(panic: &(dyn Any + Send)) -> &str {
         .unwrap_or("a panic with no message")
 }
 
-/// A slice from a C array: empty for null with a count of zero, `None` for null with
-/// any other count.
+/// A slice from a C array. A null `data` gives an empty slice if `len` is zero, and
+/// `None` otherwise.
 ///
 /// # Safety
 ///
@@ -41,7 +41,7 @@ unsafe fn slice<'a, V>(data: *const V, len: usize) -> Option<&'a [V]> {
     Some(unsafe { core::slice::from_raw_parts(data, len) })
 }
 
-/// As [`slice`], mutable.
+/// Like [`slice`], but mutable.
 ///
 /// # Safety
 ///
@@ -72,8 +72,8 @@ unsafe fn text<'a>(text: *const c_char) -> Option<&'a str> {
 ///
 /// # Safety
 ///
-/// `handle` is null or a handle `instantiate_co_simulation::<T>` returned and
-/// `free::<T>` has not freed.
+/// `handle` is null, or was returned by `instantiate_co_simulation::<T>` and not yet
+/// freed by `free::<T>`.
 pub unsafe fn with<T: Fmu>(
     handle: Handle,
     function: &'static str,
@@ -86,22 +86,22 @@ pub unsafe fn with<T: Fmu>(
     // SAFETY: the caller's contract, and `pointer` is not null.
     match catch_unwind(AssertUnwindSafe(|| call(unsafe { &mut *pointer }))) {
         Ok(status) => status,
-        // SAFETY: as above; the closure's borrow ended with the unwind.
+        // SAFETY: as above. The closure's borrow ended when it unwound.
         Err(panic) => unsafe { &mut *pointer }.poison(function, panic_message(&*panic)),
     }
 }
 
-/// Answers a function this FMU does not implement.
+/// Fails a function this FMU does not implement, and logs why.
 ///
 /// # Safety
 ///
-/// As [`with`].
+/// Same as [`with`].
 pub unsafe fn refuse<T: Fmu>(handle: Handle, function: &'static str, why: &str) -> Status {
     // SAFETY: the caller's contract.
     unsafe { with::<T>(handle, function, |i| i.refuse(function, why)) }
 }
 
-/// Logs why an interface fmite does not implement yet cannot be instantiated.
+/// Logs that `interface` is not implemented, and returns a null instance.
 ///
 /// # Safety
 ///
@@ -121,7 +121,7 @@ pub unsafe fn refuse_instantiation(
 ///
 /// # Safety
 ///
-/// The importer's pointers are as the standard requires.
+/// The importer's pointers are valid as the standard requires.
 #[allow(clippy::too_many_arguments, clippy::fn_params_excessive_bools)]
 pub unsafe fn instantiate_co_simulation<T: CoSimulation>(
     name: *const c_char,
@@ -170,10 +170,10 @@ pub unsafe fn instantiate_co_simulation<T: CoSimulation>(
 ///
 /// # Safety
 ///
-/// As [`with`]; the handle is not used again.
+/// Same as [`with`]. The handle is not used afterwards.
 pub unsafe fn free<T: Fmu>(handle: Handle) {
     if !handle.is_null() {
-        // SAFETY: the caller's contract: the handle is a `Box<Instance<T>>`.
+        // SAFETY: by the caller's contract, the handle is a `Box<Instance<T>>`.
         let instance = unsafe { Box::from_raw(handle.cast::<Instance<T>>()) };
         let _ = catch_unwind(AssertUnwindSafe(|| drop(instance)));
     }
@@ -183,7 +183,7 @@ pub unsafe fn free<T: Fmu>(handle: Handle) {
 ///
 /// # Safety
 ///
-/// As [`with`], and `categories` holds `n` C strings.
+/// Same as [`with`], and `categories` holds `n` C strings.
 pub unsafe fn set_debug_logging<T: Fmu>(
     handle: Handle,
     n: usize,
@@ -209,7 +209,7 @@ pub unsafe fn set_debug_logging<T: Fmu>(
 ///
 /// # Safety
 ///
-/// As [`with`], and the arrays hold their counts.
+/// Same as [`with`], and each array holds as many values as its count.
 pub unsafe fn get<T: Fmu, V: Carrier>(
     handle: Handle,
     vrs: *const u32,
@@ -233,7 +233,7 @@ pub unsafe fn get<T: Fmu, V: Carrier>(
 ///
 /// # Safety
 ///
-/// As [`with`], and the arrays hold their counts.
+/// Same as [`with`], and each array holds as many values as its count.
 pub unsafe fn set<T: Fmu, V: Carrier>(
     handle: Handle,
     vrs: *const u32,
@@ -269,7 +269,7 @@ unsafe fn write<V>(out: *mut V, value: V) {
 ///
 /// # Safety
 ///
-/// As [`with`], and the out-pointers are null or valid for a write.
+/// Same as [`with`], and each out-pointer is null or valid for a write.
 #[allow(clippy::too_many_arguments)]
 pub unsafe fn do_step<T: CoSimulation>(
     handle: Handle,
@@ -294,11 +294,11 @@ pub unsafe fn do_step<T: CoSimulation>(
     }
 }
 
-/// `fmi3GetFMUState`: a new state, or the importer's old one overwritten.
+/// `fmi3GetFMUState`. Overwrites the importer's state if given one, else makes one.
 ///
 /// # Safety
 ///
-/// As [`with`]; `state` points to null or to a state this instance made.
+/// Same as [`with`], and `state` points to null or to a state this instance made.
 pub unsafe fn get_fmu_state<T: State>(handle: Handle, state: *mut Handle) -> Status {
     let function = "fmi3GetFMUState";
     // SAFETY: the caller's contract.
@@ -325,7 +325,7 @@ pub unsafe fn get_fmu_state<T: State>(handle: Handle, state: *mut Handle) -> Sta
 ///
 /// # Safety
 ///
-/// As [`with`]; `state` is null or a state this instance made.
+/// Same as [`with`], and `state` is null or a state this instance made.
 pub unsafe fn set_fmu_state<T: State>(handle: Handle, state: Handle) -> Status {
     let function = "fmi3SetFMUState";
     // SAFETY: the caller's contract.
@@ -339,11 +339,11 @@ pub unsafe fn set_fmu_state<T: State>(handle: Handle, state: Handle) -> Status {
     }
 }
 
-/// `fmi3FreeFMUState`: frees the state and nulls the importer's pointer.
+/// `fmi3FreeFMUState`. Frees the state and sets the importer's pointer to null.
 ///
 /// # Safety
 ///
-/// As [`with`]; `state` points to null or to a state this instance made.
+/// Same as [`with`], and `state` points to null or to a state this instance made.
 pub unsafe fn free_fmu_state<T: State>(handle: Handle, state: *mut Handle) -> Status {
     // SAFETY: the caller's contract.
     unsafe {

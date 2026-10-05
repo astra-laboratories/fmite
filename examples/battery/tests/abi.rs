@@ -1,9 +1,9 @@
 //! Header conformance: `tests/abi.c` names all 75 functions of the FMI 3.0.1 headers
 //! with the headers' own types, and links against this FMU's `cdylib`. A missing or
-//! misspelt symbol fails the link. The headers cannot see Rust's parameter types, so
-//! those are checked at runtime by an importer, not here.
+//! misspelled symbol fails the link. The headers cannot check Rust's parameter types,
+//! so an importer checks those at runtime instead.
 //!
-//! Skipped, with a message, where there is no C compiler.
+//! Skipped, with a message, if there is no C compiler.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -26,7 +26,7 @@ fn every_header_function_is_exported() {
         return;
     }
     let fmite = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    // `cargo test` links the rlib only; the cdylib needs a build of its own.
+    // `cargo test` builds only the rlib, so build the cdylib separately.
     run(Command::new(env!("CARGO"))
         .args(["build", "--quiet", "--package", "battery", "--lib"])
         .current_dir(&fmite));
@@ -43,7 +43,7 @@ fn every_header_function_is_exported() {
         .arg(format!("-Wl,-rpath,{}", libraries.display()))
         .args(["-lbattery", "-o"])
         .arg(&program));
-    // Windows' C runtime writes stdout in text mode, so the line ends `\r\n` there.
+    // On Windows the C runtime writes stdout in text mode, so lines end in `\r\n`.
     let output = run(&mut Command::new(&program));
     assert_eq!(output.lines().collect::<Vec<_>>(), ["75 3.0"]);
 }

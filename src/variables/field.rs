@@ -108,9 +108,9 @@ where
         surplus(out.len() - at)
     }
 
-    /// Sets the value from the importer's values, for `Variables::set`. Model code has
-    /// no use for it, and the types cannot stop it calling it; they stop it writing an
-    /// input by accident, not on purpose. Atomic: on an error the value is unchanged.
+    /// Sets the value from the importer's values, for `Variables::set`. Model code
+    /// should not call it. The types prevent writing an input by accident, not on
+    /// purpose. On an error the value is unchanged.
     ///
     /// # Errors
     ///

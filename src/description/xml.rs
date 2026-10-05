@@ -1,16 +1,16 @@
-//! An indenting XML writer, and `xs:double` text for a float: all the XML a model
-//! description needs, and nothing about FMI.
+//! An indenting XML writer and `xs:double` text for floats: all the XML a model
+//! description needs, with no knowledge of FMI.
 
 use core::fmt::Write as _;
 
-/// An indenting XML writer, enough for a model description.
+/// An indenting XML writer.
 pub struct Xml {
     out: String,
     depth: usize,
 }
 
 impl Xml {
-    /// A UTF-8 document, its declaration written.
+    /// A UTF-8 document with its declaration written.
     #[must_use]
     pub fn document() -> Self {
         Self {
@@ -19,7 +19,7 @@ impl Xml {
         }
     }
 
-    /// The text written.
+    /// The text written so far.
     #[must_use]
     pub fn finish(self) -> String {
         self.out

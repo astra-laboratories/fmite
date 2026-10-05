@@ -1,6 +1,6 @@
-//! Derives for fmite. Each writes exactly the impl a hand-written one would, through
-//! fmite's public API, so the derive adds no rule of its own: Table 22 is checked by
-//! `Variable::new::<FieldType>` for a derived list as for a hand-written one.
+//! Derives for fmite. Each writes the same impl you would write by hand, using fmite's
+//! public API, so it adds no rules of its own. `Variable::new::<FieldType>` checks
+//! Table 22 for derived and hand-written lists alike.
 
 #![deny(clippy::all)]
 #![warn(clippy::pedantic)]
@@ -24,8 +24,8 @@ const VARIABLE_TYPES: [&str; 6] = [
 
 /// Implements `fmite::Variables` for a struct. Each field of type `Input`, `Output`,
 /// `Parameter`, `CalculatedParameter` or `Local` is a variable, numbered in declaration
-/// order from 1; `time` is 0. `MODEL_NAME` is the crate's package name, and
-/// `INSTANTIATION_TOKEN` a hash of the variable declarations.
+/// order from 1 (`time` is 0). `MODEL_NAME` is the crate's package name, and
+/// `INSTANTIATION_TOKEN` is a hash of the variable declarations.
 #[proc_macro_derive(Variables)]
 pub fn derive_variables(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -126,8 +126,8 @@ fn token(signature: &str) -> String {
 }
 
 /// Implements `fmite::Enumeration` for an enum of unit variants. The items are the
-/// variants, valued by their discriminants, which must be integer literals where
-/// given; as in Rust, an unvalued variant is one more than the one before, and the
+/// variants, valued by their discriminants. An explicit discriminant must be an integer
+/// literal. As in Rust, a variant without one is the previous value plus one, and the
 /// first is 0.
 #[proc_macro_derive(Enumeration)]
 pub fn derive_enumeration(input: TokenStream) -> TokenStream {

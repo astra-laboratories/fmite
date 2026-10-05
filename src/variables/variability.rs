@@ -1,4 +1,4 @@
-//! Variability: when a variable may change, and which variabilities a value type
+//! Variability: when a variable may change, and which variabilities each value type
 //! allows.
 
 use super::{Float, FmiType};
@@ -23,8 +23,8 @@ named!(Variability {
     Continuous => "continuous",
 });
 
-/// `Self` is a legal variability for a variable of type `T`: any of them, except that
-/// only floats are continuous.
+/// `Self` is a valid variability for a variable of type `T`. All are valid, except that
+/// only floats can be continuous.
 #[diagnostic::on_unimplemented(message = "a `{T}` variable cannot be `{Self}`")]
 pub trait VariabilityOf<T> {}
 
