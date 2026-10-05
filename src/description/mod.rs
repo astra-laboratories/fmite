@@ -3,7 +3,9 @@
 //! types from the variables' types, the interface element from `CoSimulation` and the
 //! export list, and the start values from `T::default()`.
 
-use core::fmt::Write as _;
+mod xml;
+
+use xml::{Xml, number};
 
 use crate::export::Exported;
 use crate::log;
@@ -23,9 +25,7 @@ pub fn model_identifier<T: Fmu>() -> String {
 ///
 /// When `T::default()` cannot give a start value its `VARIABLES` promise.
 pub fn model_description<T: CoSimulation + Exported>() -> Result<String, Error> {
-    let mut xml = Xml::default();
-    xml.out
-        .push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    let mut xml = Xml::document();
     let mut root = vec![
         ("fmiVersion", "3.0".to_owned()),
         ("modelName", T::MODEL_NAME.to_owned()),
@@ -98,7 +98,7 @@ pub fn model_description<T: CoSimulation + Exported>() -> Result<String, Error> 
 
     model_structure(&mut xml, T::VARIABLES);
     xml.close("fmiModelDescription");
-    Ok(xml.out)
+    Ok(xml.finish())
 }
 
 /// The items of `all` with distinct `name`s, in order of first use. `check` has refused
@@ -241,17 +241,6 @@ fn start<T: Fmu>(model: &T, variable: &Variable) -> Result<String, Error> {
     Ok(values.join(" "))
 }
 
-/// A float as `xs:double` writes it: the shortest text that reads back exactly.
-fn number(x: f64) -> String {
-    if x.is_nan() {
-        "NaN".to_owned()
-    } else if x.is_infinite() {
-        if x > 0.0 { "INF" } else { "-INF" }.to_owned()
-    } else {
-        x.to_string()
-    }
-}
-
 /// `<ModelStructure>`, every `dependencies` written out. An output depends on no input:
 /// model code writes an output only in a hook or a step, never in a `set`, so an input
 /// set at a communication point reaches no output before the next `fmi3DoStep`. There
@@ -291,54 +280,6 @@ fn model_structure(xml: &mut Xml, variables: &[Variable]) {
         );
     }
     xml.close("ModelStructure");
-}
-
-/// An indenting XML writer, enough for a model description.
-#[derive(Default)]
-struct Xml {
-    out: String,
-    depth: usize,
-}
-
-impl Xml {
-    fn start(&mut self, name: &str, attributes: &[(&str, String)]) {
-        let indent = "  ".repeat(self.depth);
-        let _ = write!(self.out, "{indent}<{name}");
-        for (key, value) in attributes {
-            let _ = write!(self.out, " {key}=\"{}\"", escape(value));
-        }
-    }
-
-    fn open(&mut self, name: &str, attributes: &[(&str, String)]) {
-        self.start(name, attributes);
-        self.out.push_str(">\n");
-        self.depth += 1;
-    }
-
-    fn empty(&mut self, name: &str, attributes: &[(&str, String)]) {
-        self.start(name, attributes);
-        self.out.push_str("/>\n");
-    }
-
-    fn close(&mut self, name: &str) {
-        self.depth -= 1;
-        let indent = "  ".repeat(self.depth);
-        let _ = writeln!(self.out, "{indent}</{name}>");
-    }
-}
-
-fn escape(text: &str) -> String {
-    let mut escaped = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '&' => escaped.push_str("&amp;"),
-            '<' => escaped.push_str("&lt;"),
-            '>' => escaped.push_str("&gt;"),
-            '"' => escaped.push_str("&quot;"),
-            c => escaped.push(c),
-        }
-    }
-    escaped
 }
 
 #[cfg(test)]
@@ -421,19 +362,5 @@ mod tests {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-    }
-
-    #[test]
-    fn attribute_text_is_escaped() {
-        assert_eq!(escape(r#"a < b & "c""#), "a &lt; b &amp; &quot;c&quot;");
-    }
-
-    #[test]
-    fn floats_are_written_as_xs_double() {
-        assert_eq!(number(0.1), "0.1");
-        assert_eq!(number(273.15), "273.15");
-        assert_eq!(number(f64::INFINITY), "INF");
-        assert_eq!(number(f64::NEG_INFINITY), "-INF");
-        assert_eq!(number(f64::NAN), "NaN");
     }
 }
