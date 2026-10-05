@@ -43,5 +43,7 @@ fn every_header_function_is_exported() {
         .arg(format!("-Wl,-rpath,{}", libraries.display()))
         .args(["-lbattery", "-o"])
         .arg(&program));
-    assert_eq!(run(&mut Command::new(&program)), "75 3.0\n");
+    // Windows' C runtime writes stdout in text mode, so the line ends `\r\n` there.
+    let output = run(&mut Command::new(&program));
+    assert_eq!(output.lines().collect::<Vec<_>>(), ["75 3.0"]);
 }
