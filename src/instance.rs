@@ -1,5 +1,5 @@
 //! `Instance<T>`: one instantiated FMU. It checks every call the importer makes against
-//! the standard's state machine and against `T::VARIABLES`, so that `T` sees only the
+//! the Co-Simulation state machine and against `T::VARIABLES`, so that `T` sees only the
 //! calls the standard allows, with references it knows and values of the right type.
 
 use crate::abi::Status;
@@ -81,7 +81,7 @@ impl<T: Fmu> Instance<T> {
         })
     }
 
-    /// The model, for tests and for the description writer.
+    /// The model, for a test that drives the instance from Rust and reads what it did.
     pub fn model(&self) -> &T {
         &self.model
     }
