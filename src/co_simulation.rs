@@ -1,4 +1,4 @@
-//! Co-Simulation: the interface, the communication step, and the instance's clock.
+//! Co-Simulation: the interface, the communication step, and the instance's timeline.
 
 use crate::{Error, Fmu};
 
@@ -75,13 +75,13 @@ pub enum StepResult {
 /// Time in Step Mode. With a fixed step, the instance counts ticks and computes `now`
 /// from them, so rounding errors do not build up over a long run.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Clock {
+pub struct Timeline {
     start: f64,
     ticks: u64,
     pub now: f64,
 }
 
-impl Clock {
+impl Timeline {
     #[must_use]
     pub fn starting(start: f64) -> Self {
         Self {

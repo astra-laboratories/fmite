@@ -7,11 +7,15 @@ mod calls;
 
 pub use calls::*;
 
-use crate::Fmu;
+use crate::{Fmu, Interface};
 
 /// A model that [`export!`](crate::export!) made symbols for. It records the export
 /// list, so the model description and the symbols agree.
 pub trait Exported: Fmu {
+    /// The interface exported: `<CoSimulation>` or `<ScheduledExecution>`.
+    const INTERFACE: Interface;
+    /// Co-Simulation's `fixedInternalStepSize`.
+    const FIXED_INTERNAL_STEP_SIZE: Option<f64>;
     /// Whether the FMU state functions are exported. Written as `canGetAndSetFMUState`.
     const STATE: bool;
 }
@@ -22,19 +26,28 @@ pub trait Exported: Fmu {
 /// fmite::export!(Battery: CoSimulation + State);
 /// ```
 ///
-/// The list after the colon is checked: `State` needs `Battery: Clone` and fails to
-/// compile without it. Functions of an interface or capability not in the list are still
-/// exported. They return `fmi3Error` and log why.
+/// The interface is `CoSimulation` or `ScheduledExecution`, optionally `+ State`. The
+/// list after the colon is checked: `State` needs `Battery: Clone`, a Scheduled
+/// Execution FMU needs a clock, and a Co-Simulation FMU must have none, since FMI 3.0
+/// gives a Co-Simulation FMU with clocks Event Mode, which fmite does not implement.
+/// Functions of an interface or capability not in the list are still exported. They
+/// return `fmi3Error` and log why.
 ///
 /// The symbols are global and must appear once per shared library. Call the macro in the
 /// crate that builds the FMU's `cdylib`, not in a library other crates depend on.
 #[macro_export]
 macro_rules! export {
     ($model:ty: CoSimulation + State) => {
-        $crate::export!(@symbols $model, state);
+        $crate::export!(@symbols $model, co_simulation, state);
     };
     ($model:ty: CoSimulation) => {
-        $crate::export!(@symbols $model, no_state);
+        $crate::export!(@symbols $model, co_simulation, no_state);
+    };
+    ($model:ty: ScheduledExecution + State) => {
+        $crate::export!(@symbols $model, scheduled_execution, state);
+    };
+    ($model:ty: ScheduledExecution) => {
+        $crate::export!(@symbols $model, scheduled_execution, no_state);
     };
     (@capability state) => { true };
     (@capability no_state) => { false };
@@ -66,6 +79,126 @@ macro_rules! export {
             unsafe { X::refuse::<$model>(instance, "fmi3FreeFMUState", X::NO_STATE) }
         }
     };
+    (@interface co_simulation, $model:ty) => {
+        const _: () = assert!(
+            !$crate::has_clock(<$model as $crate::Variables>::VARIABLES),
+            "a Co-Simulation FMU with clocks needs Event Mode, which fmite does not implement"
+        );
+
+        impl $crate::export::Exported for $model {
+            const INTERFACE: $crate::Interface = $crate::Interface::CoSimulation;
+            const FIXED_INTERNAL_STEP_SIZE: Option<f64> =
+                <$model as $crate::CoSimulation>::FIXED_INTERNAL_STEP_SIZE;
+            const STATE: bool = STATE;
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn fmi3InstantiateCoSimulation(
+            name: *const c_char, token: *const c_char, resource_path: *const c_char,
+            visible: bool, logging_on: bool, event_mode_used: bool, early_return_allowed: bool,
+            required: *const u32, n_required: usize, environment: H,
+            log: abi::LogMessageCallback, intermediate: abi::IntermediateUpdateCallback,
+        ) -> H {
+            unsafe {
+                X::instantiate_co_simulation::<$model>(
+                    name, token, resource_path, visible, logging_on, event_mode_used,
+                    early_return_allowed, required, n_required, environment, log,
+                    intermediate,
+                )
+            }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn fmi3InstantiateScheduledExecution(
+            _: *const c_char, _: *const c_char, _: *const c_char, _: bool, _: bool,
+            environment: H, log: abi::LogMessageCallback, _: abi::ClockUpdateCallback,
+            _: abi::PreemptionCallback, _: abi::PreemptionCallback,
+        ) -> H {
+            unsafe { X::refuse_instantiation(environment, log, "Scheduled Execution") }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn fmi3DoStep(
+            instance: H, current: f64, size: f64, no_set_prior: bool,
+            event_handling_needed: *mut bool, terminate: *mut bool, early_return: *mut bool,
+            last_successful_time: *mut f64,
+        ) -> S {
+            unsafe {
+                X::do_step::<$model>(
+                    instance, current, size, no_set_prior, event_handling_needed,
+                    terminate, early_return, last_successful_time,
+                )
+            }
+        }
+
+        $crate::export!(@refused $model, NO_CLOCKS:
+            fmi3GetIntervalDecimal(*const u32, usize, *mut f64, *mut abi::IntervalQualifier);
+            fmi3GetShiftDecimal(*const u32, usize, *mut f64);
+            fmi3ActivateModelPartition(u32, f64);
+        );
+    };
+    (@interface scheduled_execution, $model:ty) => {
+        const _: () = assert!(
+            $crate::has_clock(<$model as $crate::Variables>::VARIABLES),
+            "a Scheduled Execution FMU needs a clock"
+        );
+
+        impl $crate::export::Exported for $model {
+            const INTERFACE: $crate::Interface = $crate::Interface::ScheduledExecution;
+            const FIXED_INTERNAL_STEP_SIZE: Option<f64> = None;
+            const STATE: bool = STATE;
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn fmi3InstantiateCoSimulation(
+            _: *const c_char, _: *const c_char, _: *const c_char, _: bool, _: bool, _: bool,
+            _: bool, _: *const u32, _: usize, environment: H, log: abi::LogMessageCallback,
+            _: abi::IntermediateUpdateCallback,
+        ) -> H {
+            unsafe { X::refuse_instantiation(environment, log, "Co-Simulation") }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn fmi3InstantiateScheduledExecution(
+            name: *const c_char, token: *const c_char, resource_path: *const c_char,
+            visible: bool, logging_on: bool, environment: H, log: abi::LogMessageCallback,
+            clock_update: abi::ClockUpdateCallback, lock: abi::PreemptionCallback,
+            unlock: abi::PreemptionCallback,
+        ) -> H {
+            unsafe {
+                X::instantiate_scheduled_execution::<$model>(
+                    name, token, resource_path, visible, logging_on, environment, log,
+                    clock_update, lock, unlock,
+                )
+            }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn fmi3ActivateModelPartition(
+            instance: H, clock: u32, time: f64,
+        ) -> S {
+            unsafe { X::activate_model_partition::<$model>(instance, clock, time) }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn fmi3GetIntervalDecimal(
+            instance: H, vrs: *const u32, n: usize, intervals: *mut f64,
+            qualifiers: *mut abi::IntervalQualifier,
+        ) -> S {
+            unsafe { X::get_interval_decimal::<$model>(instance, vrs, n, intervals, qualifiers) }
+        }
+
+        #[unsafe(no_mangle)]
+        pub unsafe extern "C" fn fmi3GetShiftDecimal(
+            instance: H, vrs: *const u32, n: usize, shifts: *mut f64,
+        ) -> S {
+            unsafe { X::get_shift_decimal::<$model>(instance, vrs, n, shifts) }
+        }
+
+        $crate::export!(@refused $model, NO_CO_SIMULATION:
+            fmi3DoStep(f64, f64, bool, *mut bool, *mut bool, *mut bool, *mut f64);
+        );
+    };
     (@get_set $model:ty, $($get:ident $set:ident $ty:ty,)*) => {
         $(
             #[unsafe(no_mangle)]
@@ -90,16 +223,16 @@ macro_rules! export {
             }
         )*
     };
-    (@symbols $model:ty, $state:ident) => {
-        impl $crate::export::Exported for $model {
-            const STATE: bool = $crate::export!(@capability $state);
-        }
-
+    (@symbols $model:ty, $interface:ident, $state:ident) => {
         #[allow(unsafe_code, non_snake_case, clippy::missing_safety_doc)]
         const _: () = {
             use core::ffi::c_char;
             use $crate::abi::{self, Handle as H, Status as S};
             use $crate::export as X;
+
+            const STATE: bool = $crate::export!(@capability $state);
+
+            $crate::export!(@interface $interface, $model);
 
             #[unsafe(no_mangle)]
             pub extern "C" fn fmi3GetVersion() -> *const c_char {
@@ -119,31 +252,6 @@ macro_rules! export {
                 environment: H, log: abi::LogMessageCallback,
             ) -> H {
                 unsafe { X::refuse_instantiation(environment, log, "Model Exchange") }
-            }
-
-            #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn fmi3InstantiateCoSimulation(
-                name: *const c_char, token: *const c_char, resource_path: *const c_char,
-                visible: bool, logging_on: bool, event_mode_used: bool, early_return_allowed: bool,
-                required: *const u32, n_required: usize, environment: H,
-                log: abi::LogMessageCallback, intermediate: abi::IntermediateUpdateCallback,
-            ) -> H {
-                unsafe {
-                    X::instantiate_co_simulation::<$model>(
-                        name, token, resource_path, visible, logging_on, event_mode_used,
-                        early_return_allowed, required, n_required, environment, log,
-                        intermediate,
-                    )
-                }
-            }
-
-            #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn fmi3InstantiateScheduledExecution(
-                _: *const c_char, _: *const c_char, _: *const c_char, _: bool, _: bool,
-                environment: H, log: abi::LogMessageCallback, _: abi::ClockUpdateCallback,
-                _: abi::PreemptionCallback, _: abi::PreemptionCallback,
-            ) -> H {
-                unsafe { X::refuse_instantiation(environment, log, "Scheduled Execution") }
             }
 
             #[unsafe(no_mangle)]
@@ -174,20 +282,6 @@ macro_rules! export {
             #[unsafe(no_mangle)]
             pub unsafe extern "C" fn fmi3Reset(instance: H) -> S {
                 unsafe { X::with::<$model>(instance, "fmi3Reset", |i| i.reset()) }
-            }
-
-            #[unsafe(no_mangle)]
-            pub unsafe extern "C" fn fmi3DoStep(
-                instance: H, current: f64, size: f64, no_set_prior: bool,
-                event_handling_needed: *mut bool, terminate: *mut bool, early_return: *mut bool,
-                last_successful_time: *mut f64,
-            ) -> S {
-                unsafe {
-                    X::do_step::<$model>(
-                        instance, current, size, no_set_prior, event_handling_needed,
-                        terminate, early_return, last_successful_time,
-                    )
-                }
             }
 
             $crate::export!(@get_set $model,
@@ -230,20 +324,20 @@ macro_rules! export {
                 fmi3GetOutputDerivatives(*const u32, usize, *const i32, *mut f64, usize);
             );
 
-            $crate::export!(@refused $model, NO_CLOCKS:
+            $crate::export!(@refused $model, NO_CONFIGURATION:
                 fmi3EnterConfigurationMode();
                 fmi3ExitConfigurationMode();
+            );
+
+            $crate::export!(@refused $model, ONLY_PERIODIC_INPUT_CLOCKS:
                 fmi3GetClock(*const u32, usize, *mut bool);
                 fmi3SetClock(*const u32, usize, *const bool);
-                fmi3GetIntervalDecimal(*const u32, usize, *mut f64, *mut abi::IntervalQualifier);
                 fmi3GetIntervalFraction(*const u32, usize, *mut u64, *mut u64, *mut abi::IntervalQualifier);
-                fmi3GetShiftDecimal(*const u32, usize, *mut f64);
                 fmi3GetShiftFraction(*const u32, usize, *mut u64, *mut u64);
                 fmi3SetIntervalDecimal(*const u32, usize, *const f64);
                 fmi3SetIntervalFraction(*const u32, usize, *const u64, *const u64);
                 fmi3SetShiftDecimal(*const u32, usize, *const f64);
                 fmi3SetShiftFraction(*const u32, usize, *const u64, *const u64);
-                fmi3ActivateModelPartition(u32, f64);
             );
 
             $crate::export!(@refused $model, NO_EVENT_MODE:
@@ -276,5 +370,9 @@ pub const NO_DEPENDENCIES: &str =
     "variable dependencies are in the model description, not at runtime";
 pub const NO_DERIVATIVES: &str = "this FMU computes no partial derivatives";
 pub const NO_CLOCKS: &str = "this FMU has no clocks";
+pub const NO_CO_SIMULATION: &str = "this FMU does not implement Co-Simulation";
+pub const NO_CONFIGURATION: &str = "this FMU has no structural parameters to configure";
+pub const ONLY_PERIODIC_INPUT_CLOCKS: &str = "this FMU's clocks are periodic inputs with a constant interval, \
+     activated with fmi3ActivateModelPartition and not set, with no fractions";
 pub const NO_EVENT_MODE: &str = "this FMU has no Event Mode";
 pub const NO_MODEL_EXCHANGE: &str = "this FMU does not implement Model Exchange";

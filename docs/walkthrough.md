@@ -1,8 +1,9 @@
 # fmite
 
 An FMI 3.0 implementation for Rust. `fmite` aims to cover the whole standard:
-Co-Simulation, Model Exchange and Scheduled Execution, starting with
-Co-Simulation, where the model ships with its own solver. A model is a struct
+Co-Simulation, Model Exchange and Scheduled Execution. It implements
+Co-Simulation, where the model ships with its own solver, and Scheduled
+Execution, where the importer runs the model's clocks. A model is a struct
 whose field types say what kind of FMI variable each field is. From that struct
 fmite generates the 75 `fmi3*` C functions, `modelDescription.xml` and the
 `.fmu` archive, and it checks every call the importer makes before the model
@@ -15,7 +16,8 @@ every `compile_fail` block is an FMI 3.0 rule the compiler enforces.
 2. [What gets generated](#2-what-gets-generated)
 3. [What the compiler checks](#3-what-the-compiler-checks)
 4. [What the instance checks at runtime](#4-what-the-instance-checks-at-runtime)
-5. [Why types and not attributes](#5-why-types-and-not-attributes)
+5. [Scheduled Execution](#5-scheduled-execution)
+6. [Why types and not attributes](#6-why-types-and-not-attributes)
 
 ## 1. Writing a model
 
@@ -322,17 +324,18 @@ inside `catch_unwind`, and checks its pointers before using them. A C test assig
 each one to the header's function-pointer type, so a missing or misspelled symbol
 fails to link.
 
-| Group                                                                                              | Count | Answer                              |
-| -------------------------------------------------------------------------------------------------- | ----- | ----------------------------------- |
-| `GetVersion`, `SetDebugLogging`, `InstantiateCoSimulation`, `FreeInstance`                         | 4     | implemented                         |
-| `EnterInitializationMode`, `ExitInitializationMode`, `Terminate`, `Reset`, `DoStep`                | 5     | implemented                         |
-| `Get`/`Set` for `Float32` to `UInt64` and `Boolean`                                                | 22    | implemented                         |
-| `GetFMUState`, `SetFMUState`, `FreeFMUState`                                                       | 3     | implemented with `State`; else refused |
-| `InstantiateModelExchange`, `InstantiateScheduledExecution`                                        | 2     | refused: null instance, logged      |
-| `String` and `Binary` get/set, state serialization, dependencies, derivatives, clocks, event mode, Model Exchange | 39 | refused: `fmi3Error`, logged |
+| Group                                                                                                                              | Count | Answer                                                 |
+| ---------------------------------------------------------------------------------------------------------------------------------- | ----- | ------------------------------------------------------ |
+| `GetVersion`, `SetDebugLogging`, `FreeInstance`, `EnterInitializationMode`, `ExitInitializationMode`, `Terminate`, `Reset`         | 7     | implemented                                            |
+| `Get`/`Set` for `Float32` to `UInt64` and `Boolean`                                                                                | 22    | implemented                                            |
+| `InstantiateCoSimulation`, `DoStep`                                                                                                | 2     | implemented for `CoSimulation`; else refused           |
+| `InstantiateScheduledExecution`, `ActivateModelPartition`, `GetIntervalDecimal`, `GetShiftDecimal`                                 | 4     | implemented for `ScheduledExecution`; else refused     |
+| `GetFMUState`, `SetFMUState`, `FreeFMUState`                                                                                       | 3     | implemented with `State`; else refused                 |
+| `InstantiateModelExchange`                                                                                                         | 1     | refused: null instance, logged                         |
+| `String` and `Binary` get/set, state serialization, dependencies, derivatives, the other clock functions, configuration, event mode, Model Exchange | 36 | refused: `fmi3Error`, logged |
 
 A refused function never panics. An importer that ignores the capability flags gets
-an error message, not a crash.
+an error message, not a crash. A refused instantiation returns a null instance.
 
 ### The model description
 
@@ -388,7 +391,7 @@ package, so the model name here is `fmite`; in a crate named `heater` it would b
 # let xml = fmite::description::model_description::<Heater>().unwrap();
 # assert_eq!(format!("\n{xml}"), concat!(r#"
 <?xml version="1.0" encoding="UTF-8"?>
-<fmiModelDescription fmiVersion="3.0" modelName="fmite" instantiationToken="{1f4a7687-20dd-7a82-37dc-878688a85983}" description="A proportional heater" generationTool="fmite 0.1.0" variableNamingConvention="structured">
+<fmiModelDescription fmiVersion="3.0" modelName="fmite" instantiationToken="{1f4a7687-20dd-7a82-37dc-878688a85983}" description="A proportional heater" generationTool="fmite 0.2.0" variableNamingConvention="structured">
   <CoSimulation modelIdentifier="fmite" canGetAndSetFMUState="true" canHandleVariableCommunicationStepSize="true"/>
   <UnitDefinitions>
     <Unit name="degC">
@@ -664,10 +667,10 @@ The same checks, driven from Rust:
 # fmite::export!(Heater: CoSimulation + State);
 use fmite::abi::Status;
 use fmite::log::Logger;
-use fmite::{Instance, Instantiation};
+use fmite::{Instance, Instantiation, Interface};
 
 let context = Instantiation { instance_name: "demo".to_owned(), resource_path: None };
-let mut heater = Instance::<Heater>::instantiate(Heater::INSTANTIATION_TOKEN, context, Logger::silent()).unwrap();
+let mut heater = Instance::<Heater>::instantiate(Heater::INSTANTIATION_TOKEN, context, Interface::CoSimulation, Logger::silent()).unwrap();
 
 // No step before initialization.
 assert_eq!(heater.do_step(0.0, 1.0).0, Status::Error);
@@ -689,7 +692,255 @@ assert_eq!(heater.get(&[6], ValuesMut::Float64(&mut power)), Status::Ok);
 assert_eq!(power, [500.0]);
 ```
 
-## 5. Why types and not attributes
+## 5. Scheduled Execution
+
+Under Scheduled Execution the importer is the scheduler. Each clock the model
+declares is a _model partition_: a piece of the model the importer runs, with
+`fmi3ActivateModelPartition`, each time that clock ticks. An importer that
+simulates the tasks of a controller, with their periods and priorities, runs
+the FMU this way.
+
+### Clocks are types too
+
+A clock's schedule is a marker type that implements [`Periodic`]: an interval
+and a priority. A [`Clock`] field declares the clock. A variable that belongs to
+a partition takes the marker as its last type parameter, and it is discrete.
+
+```
+use core::time::Duration;
+use fmite::{
+    Activation, Calculated, Clock, Discrete, Error, Fmu, Input, Output, Periodic,
+    ScheduledExecution, Variables,
+};
+
+pub struct Every10ms;
+
+impl Periodic for Every10ms {
+    const INTERVAL: Duration = Duration::from_millis(10);
+    const PRIORITY: u32 = 0; // a lower number runs first
+}
+
+pub struct Every100ms;
+
+impl Periodic for Every100ms {
+    const INTERVAL: Duration = Duration::from_millis(100);
+    const PRIORITY: u32 = 1;
+}
+
+#[derive(Clone, Default, Variables)]
+pub struct Filter {
+    pub fast: Clock<Every10ms>,
+    pub slow: Clock<Every100ms>,
+    pub sample: Input<f64, (), Discrete, Every10ms>,
+    /// The fast partition's running mean.
+    pub mean: Output<f64, (), Discrete, Calculated, Every10ms>,
+    /// The mean, as the slow partition last read it.
+    pub report: Output<f64, (), Discrete, Calculated, Every100ms>,
+}
+
+impl Fmu for Filter {}
+
+impl ScheduledExecution for Filter {
+    fn activate(&mut self, activation: Activation) -> Result<(), Error> {
+        if activation.is::<Every10ms>() {
+            *self.mean += (*self.sample - *self.mean) / 10.0;
+        } else if activation.is::<Every100ms>() {
+            *self.report = *self.mean;
+        }
+        Ok(())
+    }
+}
+
+fmite::export!(Filter: ScheduledExecution + State);
+
+use fmite::abi::Status;
+use fmite::log::Logger;
+use fmite::{Instance, Instantiation, Interface, Values, ValuesMut};
+
+let context = Instantiation { instance_name: "demo".to_owned(), resource_path: None };
+let mut filter = Instance::<Filter>::instantiate(
+    Filter::INSTANTIATION_TOKEN, context, Interface::ScheduledExecution, Logger::silent(),
+).unwrap();
+assert_eq!(filter.enter_initialization(0.0, None), Status::Ok);
+assert_eq!(filter.exit_initialization(), Status::Ok);
+assert_eq!(filter.set(&[3], Values::Float64(&[10.0])), Status::Ok);
+assert_eq!(filter.activate(1, 0.0), Status::Ok); // the fast clock, value reference 1
+assert_eq!(filter.activate(2, 0.0), Status::Ok); // then the slow one
+let mut report = [0.0];
+assert_eq!(filter.get(&[5], ValuesMut::Float64(&mut report)), Status::Ok);
+assert_eq!(report, [1.0]);
+# let xml = fmite::description::model_description::<Filter>().unwrap();
+# assert_eq!(format!("\n{xml}"), concat!(r#"
+<?xml version="1.0" encoding="UTF-8"?>
+<fmiModelDescription fmiVersion="3.0" modelName="fmite" instantiationToken="{3c082e27-c787-031c-ee29-375949c0a05d}" generationTool="fmite 0.2.0" variableNamingConvention="structured">
+  <ScheduledExecution modelIdentifier="fmite" canGetAndSetFMUState="true"/>
+  <LogCategories>
+    <Category name="logStatusError" description="A refused call, and why"/>
+    <Category name="logStatusFatal" description="A panic inside the FMU; the instance takes no more calls"/>
+  </LogCategories>
+  <ModelVariables>
+    <Float64 name="time" valueReference="0" causality="independent" variability="continuous"/>
+    <Clock name="fast" valueReference="1" causality="input" variability="discrete" intervalVariability="constant" intervalDecimal="0.01" priority="0"/>
+    <Clock name="slow" valueReference="2" causality="input" variability="discrete" intervalVariability="constant" intervalDecimal="0.1" priority="1"/>
+    <Float64 name="sample" valueReference="3" causality="input" variability="discrete" clocks="1" start="0"/>
+    <Float64 name="mean" valueReference="4" causality="output" variability="discrete" clocks="1"/>
+    <Float64 name="report" valueReference="5" causality="output" variability="discrete" clocks="2"/>
+  </ModelVariables>
+  <ModelStructure>
+    <Output valueReference="4" dependencies=""/>
+    <Output valueReference="5" dependencies=""/>
+  </ModelStructure>
+</fmiModelDescription>
+# "#));
+```
+
+`activate` is told which clock ticked and when. `Activation::is` compares it with
+a marker, so the partitions are an `if` over types, never over value references.
+The model description writes each clock as a `<Clock>` with a constant interval
+and its priority, and each clocked variable's `clocks` attribute names its clock.
+A clocked variable is not listed as an `<InitialUnknown>`: the standard makes
+that optional, and leaving it out is the form every importer accepts.
+
+### What the importer sees
+
+Two partitions never run at once on one instance. When two clocks tick at the
+same time, the importer runs the lower priority number first. So, in the
+example, a slow partition at a tick both share reads the mean the fast
+partition has just written. In the other direction, a fast partition that read
+a slow partition's output would read the value from the slow partition's
+previous tick. That is what separate tasks on a real scheduler compute, too.
+
+**Each partition holds the importer's preemption lock.** The standard lets an
+importer interrupt a running partition from another thread, to run a more
+urgent one. Two calls into one Rust value at once would be undefined behavior,
+so every call takes the lock (`lockPreemption`, `unlockPreemption`) that the
+importer passed at instantiation before it touches the instance. Partitions
+still start in priority order, but a running partition is never interrupted.
+The standard allows this, and it is sound.
+
+**The instance checks the calls the standard adds.**
+
+- `fmi3ActivateModelPartition` is for a clock, in Clock Activation Mode, at a time
+  later than that clock's previous activation. Clocks are not ordered among
+  themselves.
+- After an `fmi3Set`, an `fmi3Get` waits for the next activation.
+- A failed call fails every call after it, until `fmi3Terminate` or `fmi3Reset`.
+- `fmi3GetIntervalDecimal` answers each clock's interval, as
+  `fmi3IntervalUnchanged`, and `fmi3GetShiftDecimal` answers 0.
+
+**What is not implemented:** output, countdown, triggered, and tunable clocks;
+intervals as fractions; and configuration modes.
+
+### What the compiler checks
+
+**A clocked variable is discrete.**
+
+```compile_fail,E0277
+# pub struct Every10ms;
+# impl fmite::Periodic for Every10ms {
+#     const INTERVAL: core::time::Duration = core::time::Duration::from_millis(10);
+#     const PRIORITY: u32 = 0;
+# }
+let _: fmite::Input<f64, (), fmite::Continuous, Every10ms>;
+```
+
+**A variable's clock is declared, and two clocks differ.**
+
+```compile_fail,E0080
+# use core::time::Duration;
+use fmite::{Calculated, Clock, Discrete, Output, Periodic, Variable};
+
+pub struct Fast;
+impl Periodic for Fast {
+    const INTERVAL: Duration = Duration::from_millis(10);
+    const PRIORITY: u32 = 0;
+}
+
+pub struct Slow;
+impl Periodic for Slow {
+    const INTERVAL: Duration = Duration::from_millis(100);
+    const PRIORITY: u32 = 1;
+}
+
+const _: () = fmite::check(&[
+    Variable::new::<Clock<Fast>>("fast", 1),
+    Variable::new::<Output<f64, (), Discrete, Calculated, Slow>>("y", 2), // no Clock<Slow>
+]);
+```
+
+```compile_fail,E0080
+# use core::time::Duration;
+use fmite::{Clock, Periodic, Variable};
+
+pub struct Fast;
+impl Periodic for Fast {
+    const INTERVAL: Duration = Duration::from_millis(10);
+    const PRIORITY: u32 = 0;
+}
+
+pub struct Twin; // the same schedule: the same partition
+impl Periodic for Twin {
+    const INTERVAL: Duration = Duration::from_millis(10);
+    const PRIORITY: u32 = 0;
+}
+
+const _: () = fmite::check(&[
+    Variable::new::<Clock<Fast>>("fast", 1),
+    Variable::new::<Clock<Twin>>("twin", 2),
+]);
+```
+
+**A Scheduled Execution FMU has a clock.**
+
+```compile_fail,E0080
+use fmite::{Activation, Error, Fmu, Output, ScheduledExecution, Variables};
+
+#[derive(Default, Variables)]
+pub struct Clockless {
+    pub y: Output<f64>,
+}
+
+impl Fmu for Clockless {}
+
+impl ScheduledExecution for Clockless {
+    fn activate(&mut self, _: Activation) -> Result<(), Error> {
+        Ok(())
+    }
+}
+
+fmite::export!(Clockless: ScheduledExecution);
+```
+
+**A Co-Simulation FMU has none.** The standard gives a Co-Simulation FMU with
+clocks Event Mode, which fmite does not implement.
+
+```compile_fail,E0080
+# use core::time::Duration;
+use fmite::{Clock, CoSimulation, Error, Fmu, Periodic, Step, StepResult, Variables};
+
+pub struct Every10ms;
+impl Periodic for Every10ms {
+    const INTERVAL: Duration = Duration::from_millis(10);
+    const PRIORITY: u32 = 0;
+}
+
+#[derive(Default, Variables)]
+pub struct Ticking {
+    pub tick: Clock<Every10ms>,
+}
+
+impl Fmu for Ticking {}
+
+impl CoSimulation for Ticking {
+    fn do_step(&mut self, _: Step) -> Result<StepResult, Error> {
+        Ok(StepResult::Complete)
+    }
+}
+
+fmite::export!(Ticking: CoSimulation);
+```
+
+## 6. Why types and not attributes
 
 A common design annotates a struct: `#[variable(causality = "input", start = 1.0)]`.
 fmite puts each of those facts in a type instead.

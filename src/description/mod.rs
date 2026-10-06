@@ -1,7 +1,7 @@
 //! `modelDescription.xml`, written from the model's types. Nothing is set by hand:
 //! variables and their attributes come from `Variables`, units and enumeration types
-//! from the variables' types, the interface element from `CoSimulation` and the export
-//! list, and start values from `T::default()`.
+//! from the variables' types, the interface element from the export list, and start
+//! values from `T::default()`.
 
 mod xml;
 
@@ -10,7 +10,7 @@ use xml::{Xml, number};
 use crate::export::Exported;
 use crate::log;
 use crate::unit::Unit;
-use crate::{CoSimulation, Error, Fmu, Kind, ValueReference, ValuesMut, Variable};
+use crate::{Error, Fmu, Interface, Kind, Schedule, ValueReference, ValuesMut, Variable};
 
 /// The `modelIdentifier`: the model name with `-` replaced by `_`. Cargo gives the
 /// `cdylib` the same file name.
@@ -24,7 +24,7 @@ pub fn model_identifier<T: Fmu>() -> String {
 /// # Errors
 ///
 /// When `T::default()` cannot provide a start value that `VARIABLES` promises.
-pub fn model_description<T: CoSimulation + Exported>() -> Result<String, Error> {
+pub fn model_description<T: Exported>() -> Result<String, Error> {
     let mut xml = Xml::document();
     let mut root = vec![
         ("fmiVersion", "3.0".to_owned()),
@@ -41,15 +41,20 @@ pub fn model_description<T: CoSimulation + Exported>() -> Result<String, Error> 
     root.push(("variableNamingConvention", "structured".to_owned()));
     xml.open("fmiModelDescription", &root);
 
-    let mut co_simulation = vec![("modelIdentifier", model_identifier::<T>())];
+    let mut interface = vec![("modelIdentifier", model_identifier::<T>())];
     if T::STATE {
-        co_simulation.push(("canGetAndSetFMUState", "true".to_owned()));
+        interface.push(("canGetAndSetFMUState", "true".to_owned()));
     }
-    if let Some(step) = T::FIXED_INTERNAL_STEP_SIZE {
-        co_simulation.push(("fixedInternalStepSize", number(step)));
+    match T::INTERFACE {
+        Interface::CoSimulation => {
+            if let Some(step) = T::FIXED_INTERNAL_STEP_SIZE {
+                interface.push(("fixedInternalStepSize", number(step)));
+            }
+            interface.push(("canHandleVariableCommunicationStepSize", "true".to_owned()));
+            xml.empty("CoSimulation", &interface);
+        }
+        Interface::ScheduledExecution => xml.empty("ScheduledExecution", &interface),
     }
-    co_simulation.push(("canHandleVariableCommunicationStepSize", "true".to_owned()));
-    xml.empty("CoSimulation", &co_simulation);
 
     unit_definitions(&mut xml, T::VARIABLES);
     type_definitions(&mut xml, T::VARIABLES);
@@ -92,7 +97,7 @@ pub fn model_description<T: CoSimulation + Exported>() -> Result<String, Error> 
     );
     let model = T::default();
     for variable in T::VARIABLES {
-        model_variable(&mut xml, &model, variable)?;
+        model_variable(&mut xml, &model, variable, T::VARIABLES)?;
     }
     xml.close("ModelVariables");
 
@@ -180,7 +185,12 @@ fn type_definitions(xml: &mut Xml, variables: &[Variable]) {
     xml.close("TypeDefinitions");
 }
 
-fn model_variable<T: Fmu>(xml: &mut Xml, model: &T, variable: &Variable) -> Result<(), Error> {
+fn model_variable<T: Fmu>(
+    xml: &mut Xml,
+    model: &T,
+    variable: &Variable,
+    variables: &[Variable],
+) -> Result<(), Error> {
     let mut attributes = vec![
         ("name", variable.name.to_owned()),
         ("valueReference", variable.value_reference.to_string()),
@@ -190,6 +200,17 @@ fn model_variable<T: Fmu>(xml: &mut Xml, model: &T, variable: &Variable) -> Resu
     }
     attributes.push(("causality", variable.causality.to_owned()));
     attributes.push(("variability", variable.variability.to_owned()));
+    match (variable.kind, variable.clock) {
+        (Kind::Clock, Some(schedule)) => {
+            attributes.push(("intervalVariability", "constant".to_owned()));
+            attributes.push(("intervalDecimal", number(schedule.interval.as_secs_f64())));
+            attributes.push(("priority", schedule.priority.to_string()));
+        }
+        (_, Some(schedule)) => {
+            attributes.push(("clocks", clock_reference(variables, schedule).to_string()));
+        }
+        (_, None) => {}
+    }
     if variable.initial != variable.default_initial {
         attributes.push(("initial", variable.initial.to_owned()));
     }
@@ -211,6 +232,15 @@ fn model_variable<T: Fmu>(xml: &mut Xml, model: &T, variable: &Variable) -> Resu
         xml.close(element);
     }
     Ok(())
+}
+
+/// The value reference of the clock with `schedule`. `check` has made sure there is
+/// exactly one.
+fn clock_reference(variables: &[Variable], schedule: Schedule) -> u32 {
+    (variables.iter())
+        .find(|v| v.kind == Kind::Clock && v.clock == Some(schedule))
+        .map(|clock| clock.value_reference)
+        .expect("`check` refuses a variable whose clock is not declared")
 }
 
 /// The variable's value in `model` as `start` attribute text. An array is a row-major
@@ -237,6 +267,7 @@ fn start<T: Fmu>(model: &T, variable: &Variable) -> Result<String, Error> {
         Kind::Int64 | Kind::Enumeration => read!(Int64, 0, |x: i64| x.to_string()),
         Kind::UInt64 => read!(UInt64, 0, |x: u64| x.to_string()),
         Kind::Boolean => read!(Boolean, false, |x: bool| x.to_string()),
+        Kind::Clock => return Err(Error::new("a clock has no start value")),
     };
     Ok(values.join(" "))
 }
@@ -247,6 +278,9 @@ fn start<T: Fmu>(model: &T, variable: &Variable) -> Result<String, Error> {
 /// never in a `set`, so an input set at a communication point reaches no output before
 /// the next `fmi3DoStep`. With no direct feedthrough, an importer can close a loop
 /// through the FMU without making an algebraic loop.
+///
+/// A clocked variable is not an initial unknown: the standard makes declaring one
+/// optional (FMI 3.0 §2.2.8.3), and leaving it out is the form every importer accepts.
 ///
 /// An initial unknown depends on every variable the importer may set during
 /// initialization. The hooks may read any of them, so this is the coarsest true answer.
@@ -271,7 +305,8 @@ fn model_structure(xml: &mut Xml, variables: &[Variable]) {
         );
     }
     let initial_unknowns = variables.iter().filter(|v| {
-        (v.causality == "output" && !v.has_start) || v.causality == "calculatedParameter"
+        v.clock.is_none()
+            && ((v.causality == "output" && !v.has_start) || v.causality == "calculatedParameter")
     });
     for unknown in initial_unknowns {
         xml.empty(
@@ -288,7 +323,7 @@ fn model_structure(xml: &mut Xml, variables: &[Variable]) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_model::Gain;
+    use crate::test_model::{Gain, Ticker};
 
     const EXPECTED: &str = concat!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -336,21 +371,56 @@ mod tests {
 "#
     );
 
+    const SCHEDULED: &str = concat!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<fmiModelDescription fmiVersion="3.0" modelName="ticker-test" instantiationToken="{ticker}" generationTool="fmite "#,
+        env!("CARGO_PKG_VERSION"),
+        r#"" variableNamingConvention="structured">
+  <ScheduledExecution modelIdentifier="ticker_test"/>
+  <LogCategories>
+    <Category name="logStatusError" description="A refused call, and why"/>
+    <Category name="logStatusFatal" description="A panic inside the FMU; the instance takes no more calls"/>
+  </LogCategories>
+  <ModelVariables>
+    <Float64 name="time" valueReference="0" causality="independent" variability="continuous"/>
+    <Clock name="fast" valueReference="1" causality="input" variability="discrete" intervalVariability="constant" intervalDecimal="0.01" priority="0"/>
+    <Clock name="slow" valueReference="2" causality="input" variability="discrete" intervalVariability="constant" intervalDecimal="0.05" priority="1"/>
+    <Float64 name="u" valueReference="3" causality="input" variability="discrete" clocks="1" start="0"/>
+    <Float64 name="y" valueReference="4" causality="output" variability="discrete" clocks="1"/>
+    <Float64 name="held" valueReference="5" causality="output" variability="discrete" clocks="2"/>
+    <UInt32 name="ticks" valueReference="6" causality="output" variability="discrete"/>
+  </ModelVariables>
+  <ModelStructure>
+    <Output valueReference="4" dependencies=""/>
+    <Output valueReference="5" dependencies=""/>
+    <Output valueReference="6" dependencies=""/>
+    <InitialUnknown valueReference="6" dependencies="3"/>
+  </ModelStructure>
+</fmiModelDescription>
+"#
+    );
+
     #[test]
     fn the_description_is_written_from_the_types() {
         assert_eq!(model_description::<Gain>().unwrap(), EXPECTED);
+        assert_eq!(model_description::<Ticker>().unwrap(), SCHEDULED);
     }
 
     #[test]
     fn the_description_is_valid_against_the_official_schema() {
+        valid(EXPECTED, "co-simulation");
+        valid(SCHEDULED, "scheduled-execution");
+    }
+
+    fn valid(description: &str, name: &str) {
         let schema = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/tests/schema/fmi3ModelDescription.xsd"
         );
-        let dir = std::env::temp_dir().join(format!("fmite-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!("fmite-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let file = dir.join("modelDescription.xml");
-        std::fs::write(&file, EXPECTED).unwrap();
+        std::fs::write(&file, description).unwrap();
         let Ok(output) = std::process::Command::new("xmllint")
             .args(["--noout", "--schema", schema])
             .arg(&file)

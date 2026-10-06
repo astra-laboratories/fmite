@@ -1,10 +1,11 @@
 //! `Variable`, one entry of `<ModelVariables>`, and `Definition`, what a field type
 //! says about the variable it declares.
 
-use super::causality::Causality;
+use super::causality::{self, Causality};
 use super::unit::{Unit, UnitOf};
 use super::{
-    Dims, EnumerationType, Field, FmiType, Initial, InitialFor, Kind, VariabilityFor, VariabilityOf,
+    Clock, Clocking, Dims, Discrete, EnumerationType, Field, FmiType, Initial, InitialFor, Kind,
+    Periodic, Schedule, Variability, VariabilityFor, VariabilityOf,
 };
 use crate::Error;
 
@@ -24,15 +25,18 @@ pub trait Definition {
     const SETTABLE_IN_INITIALIZATION: bool;
     const SETTABLE_IN_STEP: bool;
     const UNIT: Option<&'static (&'static str, Unit)>;
+    /// A clock's own schedule, or the schedule of the clock a variable ticks with.
+    const CLOCK: Option<Schedule>;
 }
 
-impl<C, T, U, V, I> Definition for Field<C, T, U, V, I>
+impl<C, T, U, V, I, K> Definition for Field<C, T, U, V, I, K>
 where
     C: Causality,
     T: FmiType,
     U: UnitOf<T>,
     V: VariabilityFor<C> + VariabilityOf<T>,
     I: InitialFor<C, V>,
+    K: Clocking<V>,
 {
     const KIND: Kind = T::KIND;
     const DIMS: Dims = T::DIMS;
@@ -45,6 +49,24 @@ where
     const SETTABLE_IN_INITIALIZATION: bool = V::INITIALIZATION && I::HAS_START;
     const SETTABLE_IN_STEP: bool = V::STEP;
     const UNIT: Option<&'static (&'static str, Unit)> = U::DECLARED;
+    const CLOCK: Option<Schedule> = K::SCHEDULE;
+}
+
+/// A clock is an input the importer ticks. It has no start value, and no
+/// `fmi3Set{Type}` sets it.
+impl<P: Periodic> Definition for Clock<P> {
+    const KIND: Kind = Kind::Clock;
+    const DIMS: Dims = Dims::SCALAR;
+    const ENUMERATION: Option<&'static EnumerationType> = None;
+    const CAUSALITY: &'static str = <causality::Input as Causality>::NAME;
+    const VARIABILITY: &'static str = Discrete::NAME;
+    const INITIAL: &'static str = "";
+    const DEFAULT_INITIAL: &'static str = "";
+    const HAS_START: bool = false;
+    const SETTABLE_IN_INITIALIZATION: bool = false;
+    const SETTABLE_IN_STEP: bool = false;
+    const UNIT: Option<&'static (&'static str, Unit)> = None;
+    const CLOCK: Option<Schedule> = Some(Schedule::of::<P>());
 }
 
 /// One entry of `<ModelVariables>`. `causality`, `variability` and `initial` are
@@ -64,6 +86,8 @@ pub struct Variable {
     pub settable_in_initialization: bool,
     pub settable_in_step: bool,
     pub unit: Option<&'static (&'static str, Unit)>,
+    /// For a clock, its schedule. For a clocked variable, its clock's.
+    pub clock: Option<Schedule>,
 }
 
 impl Variable {
@@ -84,6 +108,7 @@ impl Variable {
             settable_in_initialization: F::SETTABLE_IN_INITIALIZATION,
             settable_in_step: F::SETTABLE_IN_STEP,
             unit: F::UNIT,
+            clock: F::CLOCK,
         }
     }
 

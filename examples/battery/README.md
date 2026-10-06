@@ -25,7 +25,7 @@ checks that the two are equal.
 
 ```sh
 cargo build -p battery
-cargo run -p battery --bin package -- battery.fmu
+cargo run -p battery --bin battery-package -- battery.fmu
 ```
 
 The first builds the `cdylib`, whose `fmi3…` symbols come from

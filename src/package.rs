@@ -8,7 +8,6 @@ use std::path::Path;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, DateTime, ZipWriter};
 
-use crate::CoSimulation;
 use crate::Error;
 use crate::description::{model_description, model_identifier};
 use crate::export::Exported;
@@ -60,10 +59,7 @@ pub fn platform(arch: &str, os: &str) -> Option<&'static str> {
 ///
 /// If a binary cannot be read, the description cannot be built, or the archive cannot
 /// be written.
-pub fn package<T: CoSimulation + Exported>(
-    binaries: &[Binary<'_>],
-    out: &Path,
-) -> Result<(), Error> {
+pub fn package<T: Exported>(binaries: &[Binary<'_>], out: &Path) -> Result<(), Error> {
     let identifier = model_identifier::<T>();
     let description = model_description::<T>()?;
     let mut entries = vec![("modelDescription.xml".to_owned(), description.into_bytes())];

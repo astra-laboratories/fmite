@@ -5,7 +5,7 @@ use battery::{Battery, Mode};
 use fmite::abi::Status;
 use fmite::description::model_description;
 use fmite::log::Logger;
-use fmite::{Instance, Instantiation, Values, ValuesMut, Variables};
+use fmite::{Instance, Instantiation, Interface, Values, ValuesMut, Variables};
 
 fn initialized(current: f64) -> Instance<Battery> {
     let context = Instantiation {
@@ -13,7 +13,8 @@ fn initialized(current: f64) -> Instance<Battery> {
         resource_path: None,
     };
     let token = Battery::INSTANTIATION_TOKEN;
-    let mut battery = Instance::instantiate(token, context, Logger::silent()).unwrap();
+    let mut battery =
+        Instance::instantiate(token, context, Interface::CoSimulation, Logger::silent()).unwrap();
     assert_eq!(battery.set(&[1], Values::Float64(&[current])), Status::Ok);
     assert_eq!(battery.enter_initialization(0.0, None), Status::Ok);
     assert_eq!(battery.exit_initialization(), Status::Ok);

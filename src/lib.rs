@@ -16,6 +16,7 @@ mod instance;
 pub mod log;
 #[cfg(feature = "package")]
 pub mod package;
+mod scheduled_execution;
 #[cfg(test)]
 mod test_model;
 mod values;
@@ -27,6 +28,7 @@ pub use error::Error;
 pub use fmite_derive::{Enumeration, Variables};
 pub use fmu::*;
 pub use instance::{Instance, Saved};
+pub use scheduled_execution::{Activation, ScheduledExecution};
 pub use values::{Carrier, Values, ValuesMut};
 pub use variables::*;
 

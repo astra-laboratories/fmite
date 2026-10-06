@@ -11,6 +11,13 @@ pub struct Instantiation {
     pub resource_path: Option<String>,
 }
 
+/// The interface an instance was made for: the `fmi3Instantiate…` the importer called.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Interface {
+    CoSimulation,
+    ScheduledExecution,
+}
+
 /// The `<DefaultExperiment>` the model description suggests to the importer.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Experiment {

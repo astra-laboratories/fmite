@@ -1,24 +1,24 @@
-//! Packages the battery FMU from the `cdylib` Cargo built next to this program.
+//! Packages the cruise FMU from the `cdylib` Cargo built next to this program.
 //!
 //! ```text
-//! cargo build -p battery && cargo run -p battery --bin package -- battery.fmu
+//! cargo build -p cruise && cargo run -p cruise --bin cruise-package -- cruise.fmu
 //! ```
 
 use std::path::PathBuf;
 
-use battery::Battery;
+use cruise::Cruise;
 use fmite::package::{Binary, package};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let out = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| "battery.fmu".to_owned());
+        .unwrap_or_else(|| "cruise.fmu".to_owned());
     let library = std::env::current_exe()?.with_file_name(format!(
-        "{}battery{}",
+        "{}cruise{}",
         std::env::consts::DLL_PREFIX,
         std::env::consts::DLL_SUFFIX
     ));
-    package::<Battery>(&[Binary::host(&library)?], &PathBuf::from(&out))?;
+    package::<Cruise>(&[Binary::host(&library)?], &PathBuf::from(&out))?;
     println!("{out}");
     Ok(())
 }
