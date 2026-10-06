@@ -6,29 +6,31 @@ use core::ops::{Deref, DerefMut};
 
 use super::causality::{self, Causality};
 use super::unit::UnitOf;
-use super::{Fixed, FmiType, InitialFor, VariabilityFor, VariabilityOf, Writable};
+use super::{Clocking, Fixed, FmiType, InitialFor, VariabilityFor, VariabilityOf, Writable};
 use crate::values::surplus;
 use crate::{Error, Values, ValuesMut};
 
 /// Every bound a [`Field`] needs, in one place.
 pub trait Valid {}
 
-impl<C, T, U, V, I> Valid for (C, T, U, V, I)
+impl<C, T, U, V, I, K> Valid for (C, T, U, V, I, K)
 where
     C: Causality,
     T: FmiType,
     U: UnitOf<T>,
     V: VariabilityFor<C> + VariabilityOf<T>,
     I: InitialFor<C, V>,
+    K: Clocking<V>,
 {
 }
 
 /// A model variable holding a `T`. Use it through the aliases: [`Input`],
-/// [`Parameter`], [`CalculatedParameter`], [`Output`], [`Local`].
+/// [`Parameter`], [`CalculatedParameter`], [`Output`], [`Local`]. `K` is the clock it
+/// ticks with: `()` for none, or a [`Periodic`](super::Periodic) marker.
 #[repr(transparent)]
-pub struct Field<C, T, U, V, I>(T, PhantomData<(C, U, V, I)>)
+pub struct Field<C, T, U, V, I, K = ()>(T, PhantomData<(C, U, V, I, K)>)
 where
-    (C, T, U, V, I): Valid;
+    (C, T, U, V, I, K): Valid;
 
 pub type Parameter<T, U = (), V = Fixed> = Field<
     causality::Parameter,
@@ -46,26 +48,28 @@ pub type CalculatedParameter<T, U = (), V = Fixed> = Field<
     <V as VariabilityFor<causality::CalculatedParameter>>::DefaultInitial,
 >;
 
-pub type Input<T, U = (), V = <T as FmiType>::DefaultVariability> =
-    Field<causality::Input, T, U, V, <V as VariabilityFor<causality::Input>>::DefaultInitial>;
+pub type Input<T, U = (), V = <T as FmiType>::DefaultVariability, K = ()> =
+    Field<causality::Input, T, U, V, <V as VariabilityFor<causality::Input>>::DefaultInitial, K>;
 
 pub type Output<
     T,
     U = (),
     V = <T as FmiType>::DefaultVariability,
     I = <V as VariabilityFor<causality::Output>>::DefaultInitial,
-> = Field<causality::Output, T, U, V, I>;
+    K = (),
+> = Field<causality::Output, T, U, V, I, K>;
 
 pub type Local<
     T,
     U = (),
     V = <T as FmiType>::DefaultVariability,
     I = <V as VariabilityFor<causality::Local>>::DefaultInitial,
-> = Field<causality::Local, T, U, V, I>;
+    K = (),
+> = Field<causality::Local, T, U, V, I, K>;
 
-impl<C, T, U, V, I> Field<C, T, U, V, I>
+impl<C, T, U, V, I, K> Field<C, T, U, V, I, K>
 where
-    (C, T, U, V, I): Valid,
+    (C, T, U, V, I, K): Valid,
 {
     #[must_use]
     pub const fn new(value: T) -> Self {
@@ -73,9 +77,9 @@ where
     }
 }
 
-impl<C, T, U, V, I> Deref for Field<C, T, U, V, I>
+impl<C, T, U, V, I, K> Deref for Field<C, T, U, V, I, K>
 where
-    (C, T, U, V, I): Valid,
+    (C, T, U, V, I, K): Valid,
 {
     type Target = T;
 
@@ -84,18 +88,18 @@ where
     }
 }
 
-impl<C: Writable<V>, T, U, V, I> DerefMut for Field<C, T, U, V, I>
+impl<C: Writable<V>, T, U, V, I, K> DerefMut for Field<C, T, U, V, I, K>
 where
-    (C, T, U, V, I): Valid,
+    (C, T, U, V, I, K): Valid,
 {
     fn deref_mut(&mut self) -> &mut T {
         &mut self.0
     }
 }
 
-impl<C, T: FmiType, U, V, I> Field<C, T, U, V, I>
+impl<C, T: FmiType, U, V, I, K> Field<C, T, U, V, I, K>
 where
-    (C, T, U, V, I): Valid,
+    (C, T, U, V, I, K): Valid,
 {
     /// Writes the value to a get buffer, for a hand-written `Variables::get`.
     ///
@@ -127,27 +131,27 @@ where
     }
 }
 
-impl<C, T: Default, U, V, I> Default for Field<C, T, U, V, I>
+impl<C, T: Default, U, V, I, K> Default for Field<C, T, U, V, I, K>
 where
-    (C, T, U, V, I): Valid,
+    (C, T, U, V, I, K): Valid,
 {
     fn default() -> Self {
         Self::new(T::default())
     }
 }
 
-impl<C, T: Clone, U, V, I> Clone for Field<C, T, U, V, I>
+impl<C, T: Clone, U, V, I, K> Clone for Field<C, T, U, V, I, K>
 where
-    (C, T, U, V, I): Valid,
+    (C, T, U, V, I, K): Valid,
 {
     fn clone(&self) -> Self {
         Self::new(self.0.clone())
     }
 }
 
-impl<C, T: fmt::Debug, U, V, I> fmt::Debug for Field<C, T, U, V, I>
+impl<C, T: fmt::Debug, U, V, I, K> fmt::Debug for Field<C, T, U, V, I, K>
 where
-    (C, T, U, V, I): Valid,
+    (C, T, U, V, I, K): Valid,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)

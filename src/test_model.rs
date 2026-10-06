@@ -1,11 +1,16 @@
-//! A small model shared by the unit tests: a gain with a tunable parameter, a calculated
-//! parameter, a unit, an array output, and an enumeration.
+//! Small models shared by the unit tests. `Gain` is Co-Simulation: a gain with a
+//! tunable parameter, a calculated parameter, a unit, an array output, and an
+//! enumeration. `Ticker` is Scheduled Execution: two clocks, a variable clocked by
+//! each, and one by neither.
 
 use crate::export::Exported;
 use crate::unit::Volt;
+use core::time::Duration;
+
 use crate::{
-    CalculatedParameter, CoSimulation, Enumeration, Error, Experiment, Fmu, Input, Output,
-    Parameter, Step, StepResult, Tunable, ValueReference, Values, ValuesMut, Variable,
+    Activation, Calculated, CalculatedParameter, Clock, CoSimulation, Discrete, Enumeration, Error,
+    Experiment, Fmu, Input, Interface, Output, Parameter, Periodic, ScheduledExecution, Step,
+    StepResult, Tunable, ValueReference, Values, ValuesMut, Variable,
 };
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -108,5 +113,85 @@ impl CoSimulation for Gain {
 }
 
 impl Exported for Gain {
+    const INTERFACE: Interface = Interface::CoSimulation;
+    const FIXED_INTERNAL_STEP_SIZE: Option<f64> = <Self as CoSimulation>::FIXED_INTERNAL_STEP_SIZE;
     const STATE: bool = true;
+}
+
+pub enum Fast {}
+
+impl Periodic for Fast {
+    const INTERVAL: Duration = Duration::from_millis(10);
+    const PRIORITY: u32 = 0;
+}
+
+pub enum Slow {}
+
+impl Periodic for Slow {
+    const INTERVAL: Duration = Duration::from_millis(50);
+    const PRIORITY: u32 = 1;
+}
+
+/// The fast partition adds `u` to what the slow one last held. The slow partition
+/// holds `u`.
+#[derive(Clone, Default)]
+pub struct Ticker {
+    pub fast: Clock<Fast>,
+    pub slow: Clock<Slow>,
+    pub u: Input<f64, (), Discrete, Fast>,
+    pub y: Output<f64, (), Discrete, Calculated, Fast>,
+    pub held: Output<f64, (), Discrete, Calculated, Slow>,
+    pub ticks: Output<u32>,
+}
+
+impl crate::Variables for Ticker {
+    const MODEL_NAME: &'static str = "ticker-test";
+    const INSTANTIATION_TOKEN: &'static str = "{ticker}";
+    const VARIABLES: &'static [Variable] = &[
+        Variable::new::<Clock<Fast>>("fast", 1),
+        Variable::new::<Clock<Slow>>("slow", 2),
+        Variable::new::<Input<f64, (), Discrete, Fast>>("u", 3),
+        Variable::new::<Output<f64, (), Discrete, Calculated, Fast>>("y", 4),
+        Variable::new::<Output<f64, (), Discrete, Calculated, Slow>>("held", 5),
+        Variable::new::<Output<u32>>("ticks", 6),
+    ];
+
+    fn get(&self, vr: ValueReference, out: ValuesMut<'_>) -> Result<(), Error> {
+        match vr.0 {
+            1 => self.fast.get_into(out),
+            2 => self.slow.get_into(out),
+            3 => self.u.get_into(out),
+            4 => self.y.get_into(out),
+            5 => self.held.get_into(out),
+            6 => self.ticks.get_into(out),
+            _ => Err(vr.unknown()),
+        }
+    }
+
+    fn set(&mut self, vr: ValueReference, values: Values<'_>) -> Result<(), Error> {
+        match vr.0 {
+            3 => self.u.importer_set(values),
+            _ => Err(vr.unknown()),
+        }
+    }
+}
+
+impl Fmu for Ticker {}
+
+impl ScheduledExecution for Ticker {
+    fn activate(&mut self, activation: Activation) -> Result<(), Error> {
+        if activation.is::<Fast>() {
+            *self.y = *self.u + *self.held;
+        } else if activation.is::<Slow>() {
+            *self.held = *self.u;
+        }
+        *self.ticks += 1;
+        Ok(())
+    }
+}
+
+impl Exported for Ticker {
+    const INTERFACE: Interface = Interface::ScheduledExecution;
+    const FIXED_INTERNAL_STEP_SIZE: Option<f64> = None;
+    const STATE: bool = false;
 }

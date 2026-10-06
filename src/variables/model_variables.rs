@@ -1,8 +1,8 @@
 //! `Variables`, which declares a model's variables and reads and writes them by value
 //! reference, and `check`, which rejects a list the model description cannot express.
 
-use super::Variable;
 use super::unit::Unit;
+use super::{Kind, Schedule, Variable};
 use crate::{Error, Values, ValuesMut};
 
 /// A value reference: the number the importer uses for a variable. `0` is `time`,
@@ -87,9 +87,10 @@ pub trait Variables {
 }
 
 /// Rejects a variable list the model description cannot express: value reference 0
-/// (which is `time`'s), a value reference or name used twice, or two units or two
-/// enumerations that share a name but differ. Called in `const`, it fails at compile
-/// time.
+/// (which is `time`'s), a value reference or name used twice, two units or two
+/// enumerations that share a name but differ, two clocks with one schedule, or a
+/// variable that ticks with a clock the list does not declare. Called in `const`, it
+/// fails at compile time.
 ///
 /// # Panics
 ///
@@ -99,6 +100,12 @@ pub const fn check(variables: &[Variable]) {
     while i < variables.len() {
         let a = &variables[i];
         assert!(a.value_reference != 0, "value reference 0 is `time`'s");
+        if let (Some(schedule), false) = (a.clock, matches!(a.kind, Kind::Clock)) {
+            assert!(
+                declares(variables, schedule),
+                "a variable ticks with a clock the list does not declare"
+            );
+        }
         let mut j = i + 1;
         while j < variables.len() {
             let b = &variables[j];
@@ -113,6 +120,10 @@ pub const fn check(variables: &[Variable]) {
                     "two units share a name and differ in definition"
                 );
             }
+            if let (Kind::Clock, Kind::Clock, Some(x), Some(y)) = (a.kind, b.kind, a.clock, b.clock)
+            {
+                assert!(!x.same(y), "two clocks share an interval and a priority");
+            }
             if let (Some(x), Some(y)) = (a.enumeration, b.enumeration) {
                 assert!(
                     !same_str(x.name, y.name) || same_items(x.items, y.items),
@@ -123,6 +134,34 @@ pub const fn check(variables: &[Variable]) {
         }
         i += 1;
     }
+}
+
+/// Whether `variables` declares a clock.
+#[must_use]
+pub const fn has_clock(variables: &[Variable]) -> bool {
+    let mut i = 0;
+    while i < variables.len() {
+        if matches!(variables[i].kind, Kind::Clock) {
+            return true;
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Whether `variables` declares a clock with `schedule`.
+const fn declares(variables: &[Variable], schedule: Schedule) -> bool {
+    let mut i = 0;
+    while i < variables.len() {
+        let v = &variables[i];
+        if let (Kind::Clock, Some(own)) = (v.kind, v.clock)
+            && own.same(schedule)
+        {
+            return true;
+        }
+        i += 1;
+    }
+    false
 }
 
 const fn same_str(a: &str, b: &str) -> bool {
@@ -170,8 +209,9 @@ const fn same_items(a: &[(&str, i64)], b: &[(&str, i64)]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test_model::{Fast, Slow};
     use crate::unit::Celsius;
-    use crate::{Input, Output};
+    use crate::{Calculated, Clock, Discrete, Input, Output, Periodic};
 
     #[test]
     fn a_consistent_list_passes_the_check() {
@@ -209,5 +249,28 @@ mod tests {
     #[should_panic(expected = "value reference 0 is `time`'s")]
     fn value_reference_zero_is_refused() {
         check(&[Variable::new::<Input<f64>>("a", 0)]);
+    }
+
+    #[test]
+    #[should_panic(expected = "a variable ticks with a clock the list does not declare")]
+    fn a_variable_on_an_undeclared_clock_is_refused() {
+        check(&[
+            Variable::new::<Clock<Fast>>("fast", 1),
+            Variable::new::<Output<f64, (), Discrete, Calculated, Slow>>("y", 2),
+        ]);
+    }
+
+    #[test]
+    #[should_panic(expected = "two clocks share an interval and a priority")]
+    fn two_clocks_of_one_schedule_are_refused() {
+        enum Twin {}
+        impl Periodic for Twin {
+            const INTERVAL: core::time::Duration = Fast::INTERVAL;
+            const PRIORITY: u32 = Fast::PRIORITY;
+        }
+        check(&[
+            Variable::new::<Clock<Fast>>("fast", 1),
+            Variable::new::<Clock<Twin>>("twin", 2),
+        ]);
     }
 }

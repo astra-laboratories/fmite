@@ -21,6 +21,7 @@ pub enum Kind {
     UInt64,
     Boolean,
     Enumeration,
+    Clock,
 }
 
 impl Kind {
@@ -40,11 +41,12 @@ impl Kind {
             Self::UInt64 => "UInt64",
             Self::Boolean => "Boolean",
             Self::Enumeration => "Enumeration",
+            Self::Clock => "Clock",
         }
     }
 
     /// The type whose get and set functions carry the values. This is the type itself,
-    /// except that an enumeration uses `Int64`.
+    /// except that an enumeration uses `Int64`. No `fmi3Get{Type}` carries a clock.
     #[must_use]
     pub const fn carrier(self) -> &'static str {
         match self {

@@ -1,6 +1,6 @@
 [package]
 name = "fmite"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 description = "An FMI 3.0 standard in Rust"
@@ -15,7 +15,7 @@ exclude = [".github"]
 all-features = true
 
 [workspace]
-members = ["examples/battery", "fmite-derive"]
+members = ["examples/battery", "examples/cruise", "fmite-derive"]
 
 [features]
 default = ["derive"]
@@ -23,5 +23,5 @@ package = ["dep:zip"]
 derive = ["dep:fmite-derive"]
 
 [dependencies]
-fmite-derive = { path = "fmite-derive", version = "0.1.0", optional = true }
+fmite-derive = { path = "fmite-derive", version = "0.2.0", optional = true }
 zip = { version = "8", default-features = false, optional = true }

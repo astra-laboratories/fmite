@@ -13,7 +13,8 @@ use quote::{ToTokens, quote};
 use syn::{Data, DeriveInput, Error, Expr, Fields, Lit, Type, UnOp, parse_macro_input};
 
 /// The possible field types of a variable.
-const VARIABLE_TYPES: [&str; 6] = [
+const VARIABLE_TYPES: [&str; 7] = [
+    "Clock",
     "Input",
     "Output",
     "Parameter",
@@ -23,8 +24,8 @@ const VARIABLE_TYPES: [&str; 6] = [
 ];
 
 /// Implements `fmite::Variables` for a struct. Each field of type `Input`, `Output`,
-/// `Parameter`, `CalculatedParameter` or `Local` is a variable, numbered in declaration
-/// order from 1 (`time` is 0). `MODEL_NAME` is the crate's package name, and
+/// `Parameter`, `CalculatedParameter`, `Local` or `Clock` is a variable, numbered in
+/// declaration order from 1 (`time` is 0). `MODEL_NAME` is the crate's package name, and
 /// `INSTANTIATION_TOKEN` is a hash of the variable declarations.
 #[proc_macro_derive(Variables)]
 pub fn derive_variables(input: TokenStream) -> TokenStream {

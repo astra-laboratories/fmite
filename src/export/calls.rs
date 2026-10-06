@@ -1,19 +1,56 @@
 //! The bodies of the exported C functions, generic over the model.
 //!
 //! Every function runs inside `catch_unwind`, so a panic becomes `fmi3Fatal` and a log
-//! message instead of unwinding across the ABI. Every pointer is checked before use. A
+//! message instead of unwinding across the ABI. Under Scheduled Execution, every
+//! function also runs inside the importer's preemption lock, so no call preempts
+//! another on the same instance. Every pointer is checked before use. A
 //! null instance gives `fmi3Error`. A null array is an empty slice if its count is zero,
 //! and `fmi3Error` otherwise.
 
 #![allow(unsafe_code)]
 
+use core::cell::UnsafeCell;
 use core::ffi::{CStr, c_char};
 use std::any::Any;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
-use crate::abi::{Handle, IntermediateUpdateCallback, LogMessageCallback, Status};
+use crate::abi::{
+    ClockUpdateCallback, Handle, IntermediateUpdateCallback, IntervalQualifier, LogMessageCallback,
+    PreemptionCallback, Status,
+};
 use crate::log::Logger;
-use crate::{Carrier, CoSimulation, Fmu, Instance, Instantiation, Saved, State};
+use crate::{
+    Carrier, CoSimulation, Fmu, Instance, Instantiation, Interface, Saved, ScheduledExecution,
+    State,
+};
+
+/// What a handle points to: the instance, and the importer's preemption lock.
+///
+/// Scheduled Execution lets the importer preempt a call from another thread, and a
+/// `&mut Instance` alive in two calls at once would be undefined behavior. So every call
+/// takes the lock before it makes the `&mut`, and the instance is never preempted.
+/// Holding the lock for a whole partition is allowed (FMI 3.0 §5.1.2). It costs the
+/// importer the preemption of a running partition, not the order of the next ones.
+struct Hosted<T: Fmu> {
+    lock: PreemptionCallback,
+    unlock: PreemptionCallback,
+    instance: UnsafeCell<Instance<T>>,
+}
+
+impl<T: Fmu> Hosted<T> {
+    fn into_handle(
+        instance: Instance<T>,
+        lock: PreemptionCallback,
+        unlock: PreemptionCallback,
+    ) -> Handle {
+        let hosted = Self {
+            lock,
+            unlock,
+            instance: UnsafeCell::new(instance),
+        };
+        Box::into_raw(Box::new(hosted)).cast()
+    }
+}
 
 /// `fmi3GetVersion`.
 #[must_use]
@@ -72,23 +109,35 @@ unsafe fn text<'a>(text: *const c_char) -> Option<&'a str> {
 ///
 /// # Safety
 ///
-/// `handle` is null, or was returned by `instantiate_co_simulation::<T>` and not yet
-/// freed by `free::<T>`.
+/// `handle` is null, or was returned by an `instantiate_…::<T>` and not yet freed by
+/// `free::<T>`.
 pub unsafe fn with<T: Fmu>(
     handle: Handle,
     function: &'static str,
     call: impl FnOnce(&mut Instance<T>) -> Status,
 ) -> Status {
-    let pointer = handle.cast::<Instance<T>>();
-    if pointer.is_null() {
+    // SAFETY: the caller's contract. A shared reference to `Hosted` aliases nothing
+    // mutable: the instance is behind the `UnsafeCell`.
+    let Some(hosted) = (unsafe { handle.cast::<Hosted<T>>().as_ref() }) else {
         return Status::Error;
+    };
+    let locked = hosted.lock.zip(hosted.unlock);
+    if let Some((lock, _)) = locked {
+        // SAFETY: the importer's callback, as it gave it.
+        unsafe { lock() };
     }
-    // SAFETY: the caller's contract, and `pointer` is not null.
-    match catch_unwind(AssertUnwindSafe(|| call(unsafe { &mut *pointer }))) {
+    let instance = hosted.instance.get();
+    // SAFETY: the lock, or a single-threaded interface, makes this the only reference.
+    let status = match catch_unwind(AssertUnwindSafe(|| call(unsafe { &mut *instance }))) {
         Ok(status) => status,
         // SAFETY: as above. The closure's borrow ended when it unwound.
-        Err(panic) => unsafe { &mut *pointer }.poison(function, panic_message(&*panic)),
+        Err(panic) => unsafe { &mut *instance }.poison(function, panic_message(&*panic)),
+    };
+    if let Some((_, unlock)) = locked {
+        // SAFETY: as `lock`.
+        unsafe { unlock() };
     }
+    status
 }
 
 /// Fails a function this FMU does not implement, and logs why.
@@ -158,10 +207,52 @@ pub unsafe fn instantiate_co_simulation<T: CoSimulation>(
             resource_path: resource_path.map(str::to_owned),
         };
         // `instantiate` logs its own refusal.
-        Instance::<T>::instantiate(token, context, logger).ok()
+        Instance::<T>::instantiate(token, context, Interface::CoSimulation, logger).ok()
     }));
     match made {
-        Ok(Some(instance)) => Box::into_raw(Box::new(instance)).cast(),
+        Ok(Some(instance)) => Hosted::into_handle(instance, None, None),
+        _ => core::ptr::null_mut(),
+    }
+}
+
+/// `fmi3InstantiateScheduledExecution`. The preemption callbacks are used only if the
+/// importer gives both.
+///
+/// # Safety
+///
+/// The importer's pointers are valid as the standard requires.
+#[allow(clippy::too_many_arguments)]
+pub unsafe fn instantiate_scheduled_execution<T: ScheduledExecution>(
+    name: *const c_char,
+    token: *const c_char,
+    resource_path: *const c_char,
+    _visible: bool,
+    _logging_on: bool,
+    environment: Handle,
+    log: LogMessageCallback,
+    _clock_update: ClockUpdateCallback,
+    lock: PreemptionCallback,
+    unlock: PreemptionCallback,
+) -> Handle {
+    // SAFETY: the caller's contract.
+    let logger = unsafe { Logger::new(environment, log) };
+    let made = catch_unwind(AssertUnwindSafe(|| {
+        // SAFETY: the caller's contract.
+        let (name, token, resource_path) =
+            unsafe { (text(name), text(token), text(resource_path)) };
+        let (Some(instance_name), Some(token)) = (name, token) else {
+            logger.error("the instance name and token are required");
+            return None;
+        };
+        let context = Instantiation {
+            instance_name: instance_name.to_owned(),
+            resource_path: resource_path.map(str::to_owned),
+        };
+        // `instantiate` logs its own refusal.
+        Instance::<T>::instantiate(token, context, Interface::ScheduledExecution, logger).ok()
+    }));
+    match made {
+        Ok(Some(instance)) => Hosted::into_handle(instance, lock, unlock),
         _ => core::ptr::null_mut(),
     }
 }
@@ -173,9 +264,9 @@ pub unsafe fn instantiate_co_simulation<T: CoSimulation>(
 /// Same as [`with`]. The handle is not used afterwards.
 pub unsafe fn free<T: Fmu>(handle: Handle) {
     if !handle.is_null() {
-        // SAFETY: by the caller's contract, the handle is a `Box<Instance<T>>`.
-        let instance = unsafe { Box::from_raw(handle.cast::<Instance<T>>()) };
-        let _ = catch_unwind(AssertUnwindSafe(|| drop(instance)));
+        // SAFETY: by the caller's contract, the handle is a `Box<Hosted<T>>`.
+        let hosted = unsafe { Box::from_raw(handle.cast::<Hosted<T>>()) };
+        let _ = catch_unwind(AssertUnwindSafe(|| drop(hosted)));
     }
 }
 
@@ -355,6 +446,77 @@ pub unsafe fn free_fmu_state<T: State>(handle: Handle, state: *mut Handle) -> St
                 *slot = core::ptr::null_mut();
             }
             Status::Ok
+        })
+    }
+}
+
+/// `fmi3ActivateModelPartition`.
+///
+/// # Safety
+///
+/// Same as [`with`].
+pub unsafe fn activate_model_partition<T: ScheduledExecution>(
+    handle: Handle,
+    clock: u32,
+    time: f64,
+) -> Status {
+    // SAFETY: the caller's contract.
+    unsafe {
+        with::<T>(handle, "fmi3ActivateModelPartition", |i| {
+            i.activate(clock, time)
+        })
+    }
+}
+
+/// `fmi3GetIntervalDecimal`.
+///
+/// # Safety
+///
+/// Same as [`with`], and each array holds `n` values.
+pub unsafe fn get_interval_decimal<T: Fmu>(
+    handle: Handle,
+    vrs: *const u32,
+    n: usize,
+    intervals: *mut f64,
+    qualifiers: *mut IntervalQualifier,
+) -> Status {
+    let function = "fmi3GetIntervalDecimal";
+    // SAFETY: the caller's contract.
+    unsafe {
+        with::<T>(handle, function, |i| {
+            let arrays = (
+                slice(vrs, n),
+                slice_mut(intervals, n),
+                slice_mut(qualifiers, n),
+            );
+            let (Some(vrs), Some(intervals), Some(qualifiers)) = arrays else {
+                return i.refuse(function, "a null array with a non-zero count");
+            };
+            qualifiers.fill(IntervalQualifier::Unchanged);
+            i.intervals(vrs, intervals)
+        })
+    }
+}
+
+/// `fmi3GetShiftDecimal`.
+///
+/// # Safety
+///
+/// Same as [`with`], and each array holds `n` values.
+pub unsafe fn get_shift_decimal<T: Fmu>(
+    handle: Handle,
+    vrs: *const u32,
+    n: usize,
+    shifts: *mut f64,
+) -> Status {
+    let function = "fmi3GetShiftDecimal";
+    // SAFETY: the caller's contract.
+    unsafe {
+        with::<T>(handle, function, |i| {
+            match (slice(vrs, n), slice_mut(shifts, n)) {
+                (Some(vrs), Some(shifts)) => i.shifts(vrs, shifts),
+                _ => i.refuse(function, "a null array with a non-zero count"),
+            }
         })
     }
 }
